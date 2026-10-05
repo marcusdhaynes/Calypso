@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo",
-    "test": "node --test test/"
+    "test": "node --test --test-timeout=30000 test/host.test.mjs"
   },
   "dependencies": {
     "@calypso/shared": "*"
