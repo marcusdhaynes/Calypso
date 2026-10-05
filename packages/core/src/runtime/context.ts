@@ -100,7 +100,12 @@ export async function buildWorkerContext(
     task.description,
     memBlock,
     tools.length
-      ? `You may call tools when needed. Available: ${tools.map((t) => t.name).join(", ")}.`
+      ? [
+          `You may call tools when needed. Available: ${tools.map((t) => t.name).join(", ")}.`,
+          "Answer questions, explanations and opinions directly from your own knowledge without tools.",
+          "Only call a tool when the task needs you to act on the computer, files, apps or a web page, or to look up something you cannot know.",
+          "Never invent ids or parameters; leave optional parameters out (browser tools use your own session automatically).",
+        ].join(" ")
       : "No tools are available for this task.",
   ]
     .filter(Boolean)

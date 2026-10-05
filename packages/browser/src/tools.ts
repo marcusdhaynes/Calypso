@@ -122,10 +122,31 @@ async function gatedExecute(
   };
 }
 
-function requireSessionId(params: Record<string, unknown>): BrowserSessionId {
-  const id = params.sessionId;
-  if (typeof id !== "string" || !id) {
-    throw new Error("sessionId is required");
+function sessionIdFor(params: Record<string, unknown>, workerId: string): BrowserSessionId {
+  const raw = typeof params.sessionId === "string" && params.sessionId ? params.sessionId : `worker-${workerId}`;
+  // Model-supplied ids end up in a filesystem path; keep them safe.
+  return raw.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80) || `worker-${workerId}`;
+}
+
+/**
+ * Resolve the worker's browser session, opening it on first use. The model
+ * should not have to know a session id: omitted or unknown ids map to a
+ * per-worker session instead of failing the whole reply.
+ */
+async function ensureSession(
+  manager: BrowserSessionManager,
+  params: Record<string, unknown>,
+  ctx: Parameters<Tool["execute"]>[1],
+): Promise<BrowserSessionId> {
+  let id = sessionIdFor(params, ctx.workerId);
+  if (!manager.getSession(id)) {
+    const fallback = `worker-${ctx.workerId}`.replace(/[^A-Za-z0-9_-]/g, "_");
+    if (manager.getSession(fallback)) {
+      id = fallback;
+    } else {
+      await manager.openSession({ workerId: ctx.workerId, sessionId: fallback });
+      id = fallback;
+    }
   }
   return id;
 }
@@ -138,16 +159,16 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         url: { type: "string", description: "Absolute URL" },
       },
-      required: ["sessionId", "url"],
+      required: ["url"],
     },
     toolClass: "network",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         { type: "navigate", url: String(params.url) },
         "browser.navigate",
         params,
@@ -162,16 +183,16 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         locator: { type: "object" },
       },
-      required: ["sessionId", "locator"],
+      required: ["locator"],
     },
     toolClass: "write",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         { type: "click", locator: params.locator as never },
         "browser.click",
         params,
@@ -186,18 +207,18 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         locator: { type: "object" },
         text: { type: "string" },
         clear: { type: "boolean" },
       },
-      required: ["sessionId", "locator", "text"],
+      required: ["locator", "text"],
     },
     toolClass: "write",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         {
           type: "type",
           locator: params.locator as never,
@@ -217,16 +238,16 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         locator: { type: "object" },
       },
-      required: ["sessionId"],
+      required: [],
     },
     toolClass: "read",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         {
           type: "extract",
           locator: params.locator as never | undefined,
@@ -244,15 +265,15 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         fullPage: { type: "boolean" },
         includeText: { type: "boolean" },
       },
-      required: ["sessionId"],
+      required: [],
     },
     toolClass: "read",
     async execute(params, ctx) {
-      const sessionId = requireSessionId(params);
+      const sessionId = await ensureSession(manager, params, ctx);
       const shot = await gatedExecute(
         manager,
         sessionId,
@@ -283,16 +304,16 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         url: { type: "string" },
       },
-      required: ["sessionId"],
+      required: [],
     },
     toolClass: "network",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         { type: "newTab", url: params.url ? String(params.url) : undefined },
         "browser.newTab",
         params,
@@ -307,17 +328,17 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         locator: { type: "object" },
         files: { type: "array", items: { type: "string" } },
       },
-      required: ["sessionId", "locator", "files"],
+      required: ["locator", "files"],
     },
     toolClass: "browser_upload",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         {
           type: "upload",
           locator: params.locator as never,
@@ -336,17 +357,17 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
     parameters: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Optional. Omit to use your own browser session." },
         locator: { type: "object" },
         saveAs: { type: "string" },
       },
-      required: ["sessionId", "locator"],
+      required: ["locator"],
     },
     toolClass: "browser_download",
     async execute(params, ctx) {
       return gatedExecute(
         manager,
-        requireSessionId(params),
+        await ensureSession(manager, params, ctx),
         {
           type: "download",
           locator: params.locator as never,

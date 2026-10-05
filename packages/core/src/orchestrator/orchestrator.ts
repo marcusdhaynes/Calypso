@@ -362,6 +362,17 @@ export class Orchestrator {
         // artifact capture is best-effort
       }
       return finalResult;
+    } catch (err) {
+      // A throwing tool must not abort the whole agent loop: hand the error
+      // back to the model as a failed tool result so it can recover.
+      const failed: ToolResult = {
+        toolCallId: toolCall.id,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - started,
+      };
+      this.bus.publish({ type: "tool.result", result: failed });
+      return failed;
     } finally {
       this.workers.setStatus(worker.id, "idle");
       this.bus.publish({
