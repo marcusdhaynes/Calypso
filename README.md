@@ -40,6 +40,17 @@ SQLite via **better-sqlite3** in `@calypso/core` (`CalypsoDatabase` + `SqliteMem
 - `new Orchestrator({ databasePath })` or `{ persist: true, userDataRoot }` opens the DB; omit both for in-memory (tests).
 - Memory `retrieve()` is scoped + limited (keyword + optional cosine via Angen's `createLocalEmbeddingProvider` / `nomic-embed-text` on CPU). Never dump the whole store into a prompt.
 - Smoke: `node packages/core/test/sqlite-smoke.mjs` (after `npm run build -w @calypso/core`).
+- Agent runtime tests: `npm test -w @calypso/core` (fake ModelProvider; no Ollama required).
+
+### Agent runtime (Anky / `@calypso/core`)
+
+- **`WorkerRuntime`**: Plan → Execute → Observe → Verify loop with bounded context (instructions, memory scopes, recent messages, tool schemas), `ModelRouter.resolve`, streaming via `provider.stream`, gated `executeToolCall`, max-iteration / timeout / AbortSignal, retry-once on transient model errors. Publishes `worker.status` and `CoreStreamPush` tokens; writes worker Messages + episode memory on completion.
+- **`Planner`**: Leader produces structured Plan JSON → validate/repair → `materializePlan` → assign steps by `suggestedRole` / skills. Root task waits; children run when deps complete.
+- **`TaskDispatcher`**: Background concurrency-limited queue (default 2), one task per worker, `cancel` / `retry` / `pause` / `resume`, parent completion when all children succeed (fail if a child fails). Routine scheduler fires create tasks that flow into the dispatcher.
+- **Worker messaging**: `sendWorkerMessage` → `bus.chat` + persisted Message; built-in tools `team.message` (read) and `team.delegate` (write).
+- **Desktop entry**: prefer `orchestrator.handleUserMessage({ conversationId, content, workerId? })` + `orchestrator.setStreamHandler(push => …)` instead of a monolithic one-shot prompt. Also: `pauseWorkers` / `resumeWorkers` / `cancelTask` / `retryTask` on the Orchestrator.
+
+**Contract additions (Anky, additive):** `Task.conversationId?` / `teamId?` / `retryCount?`; `PlanStep.suggestedRole?` / `suggestedWorkerId?`; `ChatMessage.tool_calls?` + `ChatToolCall`; CoreRequest `cancelTask` / `retryTask` (CalypsoIpcApi methods optional until Tyran wires them).
 
 ### Models
 

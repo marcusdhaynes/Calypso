@@ -1,10 +1,13 @@
 import type {
+  ConversationId,
+  CoreStreamPush,
   EmbeddingProvider,
   Message,
   ModelRouter,
   Plan,
   Task,
   TaskId,
+  TeamId,
   Tool,
   ToolCall,
   ToolResult,
@@ -23,6 +26,11 @@ import { RoutineScheduler } from "../scheduler/scheduler.js";
 import { DefaultPermissionGate } from "../permissions/gate.js";
 import { CalypsoDatabase, defaultDatabasePath } from "../db/database.js";
 import type { MemoryStore } from "@calypso/shared";
+import { TaskDispatcher } from "../runtime/dispatcher.js";
+import { Planner } from "../runtime/planner.js";
+import { WorkerRuntime } from "../runtime/worker-runtime.js";
+import { createTeamTools } from "../runtime/team-tools.js";
+import { newId } from "../runtime/ids.js";
 
 export interface OrchestratorOptions {
   /** Path to calypso.sqlite, or ":memory:" for tests. Defaults to in-memory if omitted. */
@@ -35,6 +43,27 @@ export interface OrchestratorOptions {
   embeddings?: EmbeddingProvider;
   /** Skip auto-creating local embeddings (useful in unit tests). */
   disableEmbeddings?: boolean;
+  /** Dispatcher concurrency (default 2). */
+  concurrency?: number;
+  /** When false, do not auto-start the background dispatcher (tests may start manually). Default true. */
+  autoStartDispatcher?: boolean;
+}
+
+export interface HandleUserMessageInput {
+  conversationId: ConversationId;
+  content: string;
+  /** Optional worker to address; otherwise first conversation participant / team lead. */
+  workerId?: WorkerId;
+  /** When set (or conversation.teamId), use the team planner. */
+  teamId?: TeamId;
+}
+
+export interface HandleUserMessageResult {
+  userMessage: Message;
+  /** Root task created for this request (plan root or single worker task). */
+  task: Task;
+  /** All tasks materialized (root + steps when planned). */
+  tasks: Task[];
 }
 
 /**
@@ -43,6 +72,10 @@ export interface OrchestratorOptions {
  *
  * Persistence: better-sqlite3 via CalypsoDatabase when a path is provided.
  * Memory retrieve uses Angen's createLocalEmbeddingProvider when available.
+ *
+ * Agent runtime: TaskDispatcher + WorkerRuntime + Planner. Desktop should call
+ * `handleUserMessage` (or createTask + dispatcher.kick) instead of a monolithic
+ * one-shot model prompt, and register `setStreamHandler` for token streaming.
  */
 export class Orchestrator {
   readonly bus = new InProcessEventBus();
@@ -56,9 +89,13 @@ export class Orchestrator {
   readonly gate: DefaultPermissionGate;
   readonly modelRouter: ModelRouter | undefined;
   readonly embeddings: EmbeddingProvider | undefined;
+  readonly dispatcher: TaskDispatcher;
+  readonly planner: Planner;
+  readonly runtime: WorkerRuntime;
 
   private tools = new Map<string, Tool>();
-  private running = new Set<TaskId>();
+  private streamHandler: ((push: CoreStreamPush) => void) | undefined;
+  private workersPaused = false;
 
   constructor(opts: OrchestratorOptions = {}) {
     this.modelRouter = opts.modelRouter;
@@ -87,9 +124,20 @@ export class Orchestrator {
       : new InMemoryMemoryStore();
     this.gate = new DefaultPermissionGate(this.bus);
 
+    this.runtime = new WorkerRuntime(this);
+    this.planner = new Planner(this);
+    this.dispatcher = new TaskDispatcher(this, {
+      concurrency: opts.concurrency ?? 2,
+      onStream: (push) => this.streamHandler?.(push),
+    });
+
+    for (const tool of createTeamTools(this)) {
+      this.registerTool(tool);
+    }
+
     this.scheduler.start((routine) => {
       const task = this.createTask({
-        id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: newId("task"),
         title: routine.taskTemplate.title,
         description: routine.taskTemplate.description,
         status: "pending",
@@ -97,6 +145,7 @@ export class Orchestrator {
         dependsOn: [],
         assignedWorkerId: routine.workerId,
         projectId: routine.projectId,
+        teamId: routine.teamId,
         taskClass: routine.taskTemplate.taskClass,
       });
       this.bus.publish({
@@ -105,7 +154,18 @@ export class Orchestrator {
         taskId: task.id,
         at: Date.now(),
       });
+      this.dispatcher.kick();
     });
+
+    if (opts.autoStartDispatcher !== false) {
+      this.dispatcher.start();
+    }
+  }
+
+  /** Register a callback for CoreStreamPush token deltas (desktop bridges to IPC). */
+  setStreamHandler(handler: ((push: CoreStreamPush) => void) | undefined): void {
+    this.streamHandler = handler;
+    this.dispatcher.setStreamHandler(handler ? (p) => handler(p) : undefined);
   }
 
   registerTool(tool: Tool): void {
@@ -114,6 +174,10 @@ export class Orchestrator {
 
   getTool(name: string): Tool | undefined {
     return this.tools.get(name);
+  }
+
+  listTools(): Tool[] {
+    return [...this.tools.values()];
   }
 
   createWorker(partial: Omit<Worker, "createdAt" | "updatedAt" | "status"> & { status?: Worker["status"] }): Worker {
@@ -127,7 +191,8 @@ export class Orchestrator {
   }
 
   createTask(
-    partial: Omit<Task, "childIds" | "createdAt" | "updatedAt"> & { childIds?: TaskId[] }
+    partial: Omit<Task, "childIds" | "createdAt" | "updatedAt"> & { childIds?: TaskId[] },
+    opts?: { deferDispatch?: boolean }
   ): Task {
     const now = Date.now();
     const task: Task = {
@@ -138,25 +203,31 @@ export class Orchestrator {
     };
     const saved = this.tasks.upsert(task);
     this.bus.publish({ type: "task.created", task: saved });
+    if (!opts?.deferDispatch) this.dispatcher.kick();
     return saved;
   }
 
   /**
    * Expand an approved Plan into the task graph (parent root + step children).
+   * Children with no step deps start with empty dependsOn (not blocked on root).
+   * Root is left pending/waiting; dispatcher marks it completed when children finish.
    */
   materializePlan(plan: Plan, assignedWorkerId?: WorkerId): Task[] {
-    const root = this.createTask({
-      id: `task_plan_${plan.id}`,
-      title: plan.title,
-      description: plan.goal,
-      status: "pending",
-      parentId: null,
-      dependsOn: [],
-      assignedWorkerId,
-      planId: plan.id,
-      projectId: plan.projectId,
-      taskClass: "reasoning",
-    });
+    const root = this.createTask(
+      {
+        id: `task_plan_${plan.id}`,
+        title: plan.title,
+        description: plan.goal,
+        status: "waiting",
+        parentId: null,
+        dependsOn: [],
+        assignedWorkerId,
+        planId: plan.id,
+        projectId: plan.projectId,
+        taskClass: "reasoning",
+      },
+      { deferDispatch: true }
+    );
 
     const stepTasks: Task[] = [];
     const stepIdToTaskId = new Map<string, TaskId>();
@@ -164,32 +235,40 @@ export class Orchestrator {
     for (const step of plan.steps) {
       const id = `task_step_${plan.id}_${step.id}`;
       stepIdToTaskId.set(step.id, id);
+    }
+
+    for (const step of plan.steps) {
+      const id = stepIdToTaskId.get(step.id)!;
       const dependsOn = step.dependsOnStepIds
         .map((sid) => stepIdToTaskId.get(sid))
         .filter((x): x is TaskId => !!x);
-      const child = this.createTask({
-        id,
-        title: step.title,
-        description: step.description,
-        status: "pending",
-        parentId: root.id,
-        dependsOn: dependsOn.length ? dependsOn : [root.id],
-        assignedWorkerId,
-        planId: plan.id,
-        projectId: plan.projectId,
-        taskClass: step.taskClass,
-      });
+      const child = this.createTask(
+        {
+          id,
+          title: step.title,
+          description: step.description,
+          status: "pending",
+          parentId: root.id,
+          dependsOn,
+          assignedWorkerId: step.suggestedWorkerId ?? assignedWorkerId,
+          planId: plan.id,
+          projectId: plan.projectId,
+          taskClass: step.taskClass,
+        },
+        { deferDispatch: true }
+      );
       stepTasks.push(child);
     }
 
-    this.tasks.upsert({
+    const updatedRoot = this.tasks.upsert({
       ...root,
       childIds: stepTasks.map((t) => t.id),
       updatedAt: Date.now(),
     });
 
     this.bus.publish({ type: "plan.updated", plan: { ...plan, status: "executing" } });
-    return [root, ...stepTasks];
+    this.dispatcher.kick();
+    return [updatedRoot, ...stepTasks];
   }
 
   /**
@@ -223,6 +302,12 @@ export class Orchestrator {
 
     const started = Date.now();
     this.workers.setStatus(worker.id, statusForTool(tool.toolClass));
+    this.bus.publish({
+      type: "worker.status",
+      workerId: worker.id,
+      status: statusForTool(tool.toolClass),
+      at: Date.now(),
+    });
     try {
       const result = await tool.execute(toolCall.params, {
         toolCallId: toolCall.id,
@@ -252,17 +337,25 @@ export class Orchestrator {
       return finalResult;
     } finally {
       this.workers.setStatus(worker.id, "idle");
+      this.bus.publish({
+        type: "worker.status",
+        workerId: worker.id,
+        status: "idle",
+        at: Date.now(),
+      });
     }
   }
 
   /**
-   * Drain ready tasks (dependency-satisfied) for background processing.
-   * Does not freeze the UI — each task runs independently; caller may await.
+   * Drain ready tasks (legacy helper). Prefer the background TaskDispatcher.
+   * Marks ready leaf tasks as running and returns them; does not execute the agent loop.
    */
   async pump(max = 8): Promise<Task[]> {
-    const ready = this.tasks.readyTasks().filter((t) => !this.running.has(t.id)).slice(0, max);
+    const ready = this.tasks
+      .readyTasks()
+      .filter((t) => t.childIds.length === 0)
+      .slice(0, max);
     for (const t of ready) {
-      this.running.add(t.id);
       this.tasks.setStatus(t.id, "running");
       this.bus.publish({
         type: "task.status",
@@ -277,7 +370,6 @@ export class Orchestrator {
   completeTask(id: TaskId, result?: string): Task | undefined {
     const t = this.tasks.get(id);
     if (!t) return undefined;
-    this.running.delete(id);
     const updated = this.tasks.upsert({
       ...t,
       status: "completed",
@@ -298,7 +390,6 @@ export class Orchestrator {
   failTask(id: TaskId, error: string): Task | undefined {
     const t = this.tasks.get(id);
     if (!t) return undefined;
-    this.running.delete(id);
     const updated = this.tasks.upsert({
       ...t,
       status: "failed",
@@ -307,7 +398,77 @@ export class Orchestrator {
       completedAt: Date.now(),
     });
     this.bus.publish({ type: "task.updated", task: updated });
+    this.bus.publish({
+      type: "task.status",
+      taskId: id,
+      status: "failed",
+      at: Date.now(),
+    });
     return updated;
+  }
+
+  failTaskCancelled(id: TaskId): Task | undefined {
+    const t = this.tasks.get(id);
+    if (!t) return undefined;
+    const updated = this.tasks.upsert({
+      ...t,
+      status: "cancelled",
+      error: "Cancelled",
+      updatedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    this.bus.publish({ type: "task.updated", task: updated });
+    this.bus.publish({
+      type: "task.status",
+      taskId: id,
+      status: "cancelled",
+      at: Date.now(),
+    });
+    return updated;
+  }
+
+  cancelTask(id: TaskId): Task | undefined {
+    return this.dispatcher.cancel(id);
+  }
+
+  retryTask(id: TaskId): Task | undefined {
+    return this.dispatcher.retry(id);
+  }
+
+  pauseWorkers(): void {
+    this.workersPaused = true;
+    this.dispatcher.pause();
+    for (const w of this.workers.list()) {
+      if (w.status !== "offline" && w.status !== "error") {
+        this.workers.setStatus(w.id, "waiting");
+        this.bus.publish({
+          type: "worker.status",
+          workerId: w.id,
+          status: "waiting",
+          at: Date.now(),
+        });
+      }
+    }
+  }
+
+  resumeWorkers(): void {
+    this.workersPaused = false;
+    this.dispatcher.resume();
+    for (const w of this.workers.list()) {
+      if (w.status === "waiting") {
+        this.workers.setStatus(w.id, "idle");
+        this.bus.publish({
+          type: "worker.status",
+          workerId: w.id,
+          status: "idle",
+          at: Date.now(),
+        });
+      }
+    }
+  }
+
+  get areWorkersPaused(): boolean {
+    return this.workersPaused;
   }
 
   recordMessage(message: Message): Message {
@@ -316,7 +477,129 @@ export class Orchestrator {
     return message;
   }
 
+  /**
+   * Persist + publish a worker-to-worker message (bus.chat) into the team conversation.
+   */
+  sendWorkerMessage(
+    fromWorkerId: WorkerId,
+    toWorkerIds: WorkerId[],
+    content: string,
+    opts?: { taskId?: TaskId; conversationId?: ConversationId; teamId?: TeamId }
+  ): Message | undefined {
+    const from = this.workers.get(fromWorkerId);
+    this.bus.publish({
+      type: "bus.chat",
+      fromWorkerId,
+      toWorkerIds,
+      teamId: opts?.teamId ?? from?.teamId,
+      content,
+      taskId: opts?.taskId,
+      at: Date.now(),
+    });
+
+    if (!opts?.conversationId) return undefined;
+
+    const addressed =
+      toWorkerIds.length > 0
+        ? `[@${toWorkerIds.map((id) => this.workers.get(id)?.name ?? id).join(", @")}] ${content}`
+        : content;
+
+    const message: Message = {
+      id: newId("msg"),
+      conversationId: opts.conversationId,
+      author: { type: "worker", workerId: fromWorkerId },
+      content: addressed,
+      taskId: opts.taskId,
+      createdAt: Date.now(),
+    };
+    return this.recordMessage(message);
+  }
+
+  /**
+   * Preferred entry point for desktop `sendMessage`.
+   * Records the user message, creates a worker task (or team plan), and lets the
+   * dispatcher run the agent loop with streaming.
+   */
+  async handleUserMessage(input: HandleUserMessageInput): Promise<HandleUserMessageResult> {
+    const userMessage: Message = {
+      id: newId("msg"),
+      conversationId: input.conversationId,
+      author: { type: "user" },
+      content: input.content,
+      createdAt: Date.now(),
+    };
+    this.recordMessage(userMessage);
+
+    if (this.workersPaused) {
+      const sys: Message = {
+        id: newId("msg"),
+        conversationId: input.conversationId,
+        author: { type: "system" },
+        content: "Workers are paused. Resume from the tray menu to continue.",
+        createdAt: Date.now(),
+      };
+      this.recordMessage(sys);
+      const placeholder = this.createTask({
+        id: newId("task"),
+        title: "Paused",
+        description: input.content,
+        status: "cancelled",
+        parentId: null,
+        dependsOn: [],
+        conversationId: input.conversationId,
+        taskClass: "simple",
+      });
+      return { userMessage, task: placeholder, tasks: [placeholder] };
+    }
+
+    const conversation = this.database
+      ?.listConversations()
+      .find((c) => c.id === input.conversationId);
+
+    const teamId = input.teamId ?? conversation?.teamId;
+    const team = teamId ? this.teams.get(teamId) : undefined;
+
+    const targetId =
+      input.workerId ??
+      team?.leadId ??
+      conversation?.participantWorkerIds[0] ??
+      this.workers.list()[0]?.id;
+
+    // Team with multiple members → plan + delegate
+    if (team && team.memberIds.length > 1) {
+      const { plan, tasks } = await this.planner.planAndMaterialize({
+        goal: input.content,
+        team,
+        defaultWorkerId: targetId,
+        projectId: team.projectId ?? conversation?.projectId,
+        conversationId: input.conversationId,
+        createdBy: { type: "user" },
+      });
+      void plan;
+      this.dispatcher.kick();
+      return { userMessage, task: tasks[0]!, tasks };
+    }
+
+    // Single worker (or solo team): one task
+    const task = this.createTask({
+      id: newId("task"),
+      title: truncate(input.content, 80),
+      description: input.content,
+      status: "pending",
+      parentId: null,
+      dependsOn: [],
+      assignedWorkerId: targetId,
+      conversationId: input.conversationId,
+      teamId,
+      projectId: conversation?.projectId,
+      taskClass: "normal",
+    });
+    this.dispatcher.kick();
+    return { userMessage, task, tasks: [task] };
+  }
+
   close(): void {
+    this.dispatcher.close();
     this.scheduler.stop();
     this.database?.close();
   }
@@ -327,4 +610,8 @@ function statusForTool(toolClass: string): Worker["status"] {
   if (toolClass === "input_control" || toolClass === "process") return "controlling_computer";
   if (toolClass === "write" || toolClass === "destructive") return "coding";
   return "working";
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
