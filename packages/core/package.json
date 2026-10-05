@@ -19,9 +19,12 @@
   },
   "dependencies": {
     "@calypso/shared": "*",
-    "@calypso/models": "*"
+    "@calypso/models": "*",
+    "better-sqlite3": "^11.5.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.9.0"
   }
 }

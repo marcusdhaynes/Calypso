@@ -23,7 +23,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@calypso/shared": "workspace:*"
+    "@calypso/shared": "*"
   },
   "peerDependencies": {
     "react": "^18.3.1",

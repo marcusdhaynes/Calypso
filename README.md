@@ -34,7 +34,12 @@ Packaged later with **electron-builder** into `Calypso.exe` (NSIS installer + po
 
 ### Persistence
 
-SQLite via **better-sqlite3** (wired by Anky): workers, teams, conversations, messages, tasks, memory, projects, artifacts.
+SQLite via **better-sqlite3** in `@calypso/core` (`CalypsoDatabase` + `SqliteMemoryStore`):
+
+- Workers, teams, projects, tasks, routines, conversations, messages, and memory share one `calypso.sqlite` file.
+- `new Orchestrator({ databasePath })` or `{ persist: true, userDataRoot }` opens the DB; omit both for in-memory (tests).
+- Memory `retrieve()` is scoped + limited (keyword + optional cosine via Angen's `createLocalEmbeddingProvider` / `nomic-embed-text` on CPU). Never dump the whole store into a prompt.
+- Smoke: `node packages/core/test/sqlite-smoke.mjs` (after `npm run build -w @calypso/core`).
 
 ### Models
 

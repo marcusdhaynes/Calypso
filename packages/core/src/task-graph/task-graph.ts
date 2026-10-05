@@ -1,9 +1,19 @@
 import type { Task, TaskGraph, TaskId, TaskStatus } from "@calypso/shared";
+import type { CalypsoDatabase } from "../db/database.js";
 
-/** In-memory task graph skeleton. Persistence lands in SQLite (Anky). */
-export class InMemoryTaskGraph {
+/** Task graph with optional SQLite persistence. */
+export class PersistentTaskGraph {
   private tasks = new Map<TaskId, Task>();
   private roots = new Set<TaskId>();
+
+  constructor(private database?: CalypsoDatabase) {
+    if (database) {
+      for (const t of database.listTasks()) {
+        this.tasks.set(t.id, t);
+        if (t.parentId === null) this.roots.add(t.id);
+      }
+    }
+  }
 
   snapshot(): TaskGraph {
     const tasks: Record<TaskId, Task> = {};
@@ -15,10 +25,13 @@ export class InMemoryTaskGraph {
     return this.tasks.get(id);
   }
 
-  upsert(task: Task): void {
-    this.tasks.set(task.id, task);
-    if (task.parentId === null) this.roots.add(task.id);
-    else this.roots.delete(task.id);
+  upsert(task: Task): Task {
+    const full: Task = { ...task, updatedAt: task.updatedAt || Date.now() };
+    this.tasks.set(full.id, full);
+    if (full.parentId === null) this.roots.add(full.id);
+    else this.roots.delete(full.id);
+    this.database?.upsertTask(full);
+    return full;
   }
 
   setStatus(id: TaskId, status: TaskStatus): Task | undefined {
@@ -29,11 +42,10 @@ export class InMemoryTaskGraph {
     if (status === "completed" || status === "failed" || status === "cancelled") {
       updated.completedAt = Date.now();
     }
-    this.tasks.set(id, updated);
-    return updated;
+    return this.upsert(updated);
   }
 
-  /** Tasks whose dependencies are all completed and status is pending. */
+  /** Tasks whose dependencies are all completed and status is pending/ready. */
   readyTasks(): Task[] {
     const out: Task[] = [];
     for (const t of this.tasks.values()) {
@@ -43,4 +55,14 @@ export class InMemoryTaskGraph {
     }
     return out;
   }
+
+  delete(id: TaskId): boolean {
+    const ok = this.tasks.delete(id);
+    this.roots.delete(id);
+    if (ok) this.database?.deleteTask(id);
+    return ok;
+  }
 }
+
+/** @deprecated Alias kept so existing imports keep compiling during the cutover. */
+export { PersistentTaskGraph as InMemoryTaskGraph };
