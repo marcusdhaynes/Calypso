@@ -79,20 +79,19 @@ export class OpenAICompatibleProvider implements ModelProvider {
    * Do NOT turn thinking back on for normal chat (think only when request.think).
    */
   private ollamaNativeBody(request: ChatCompletionRequest, stream: boolean): string {
+    const options: Record<string, unknown> = { num_ctx: DEFAULT_NUM_CTX };
+    // Native /api/chat reads sampling params from options, not the top level.
+    if (request.temperature !== undefined) options.temperature = request.temperature;
+    if (request.max_tokens !== undefined) options.num_predict = request.max_tokens;
+    if (request.stop !== undefined) options.stop = Array.isArray(request.stop) ? request.stop : [request.stop];
     const payload: Record<string, unknown> = {
       model: request.model,
-      messages: request.messages,
+      messages: toOllamaMessages(request.messages as unknown[]),
       stream,
-      options: { num_ctx: DEFAULT_NUM_CTX },
+      options,
       // Native API respects `think`; false keeps qwen3 from burning hidden tokens.
       think: request.think === true,
     };
-    if (request.temperature !== undefined) payload.temperature = request.temperature;
-    if (request.max_tokens !== undefined) {
-      // Native uses options.num_predict for generation length.
-      (payload.options as Record<string, unknown>).num_predict = request.max_tokens;
-    }
-    if (request.stop !== undefined) payload.stop = request.stop;
     if (request.tools !== undefined) payload.tools = request.tools;
     return JSON.stringify(payload);
   }
@@ -150,8 +149,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const message = {
       role: (data.message?.role as "assistant") ?? "assistant",
       content: data.message?.content ?? "",
-      ...(data.message?.tool_calls
-        ? { tool_calls: data.message.tool_calls }
+      ...(data.message?.tool_calls?.length
+        ? { tool_calls: data.message.tool_calls.map((tc, i) => toOpenAiToolCall(tc, i)) }
         : {}),
     };
     return {
@@ -233,6 +232,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const decoder = new TextDecoder();
     let buffer = "";
     const id = `ollama-${Date.now()}`;
+    let toolIndex = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -255,7 +255,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
           const delta: ChatCompletionChunk["choices"][0]["delta"] = {};
           if (evt.message?.role) delta.role = evt.message.role;
           if (evt.message?.content) delta.content = evt.message.content;
-          if (evt.message?.tool_calls) delta.tool_calls = evt.message.tool_calls;
+          if (evt.message?.tool_calls?.length) {
+            delta.tool_calls = evt.message.tool_calls.map((tc) => toOpenAiToolCall(tc, toolIndex++));
+          }
           yield {
             id,
             choices: [
@@ -351,5 +353,49 @@ export function createOpenAICloudProvider(
       ""
     ),
     apiKey,
+  });
+}
+
+/**
+ * Native Ollama returns tool_calls as `{ function: { name, arguments: {..} } }`
+ * with no id/index, all in one chunk. The agent loop expects OpenAI deltas:
+ * a unique index per call and `arguments` as a JSON string.
+ */
+function toOpenAiToolCall(raw: unknown, index: number): Record<string, unknown> {
+  const tc = (raw ?? {}) as { id?: string; function?: { name?: string; arguments?: unknown } };
+  const args = tc.function?.arguments;
+  return {
+    index,
+    id: tc.id || `call_${Date.now().toString(36)}_${index}`,
+    type: "function",
+    function: {
+      name: tc.function?.name ?? "",
+      arguments: typeof args === "string" ? args : JSON.stringify(args ?? {}),
+    },
+  };
+}
+
+/** OpenAI-style history → native /api/chat (object args, tool_name on tool results). */
+function toOllamaMessages(messages: unknown[]): unknown[] {
+  const names = new Map<string, string>();
+  return messages.map((raw) => {
+    const m = { ...(raw as Record<string, unknown>) };
+    if (Array.isArray(m.tool_calls)) {
+      m.tool_calls = (m.tool_calls as Array<Record<string, unknown>>).map((tc) => {
+        const fn = (tc.function ?? {}) as { name?: string; arguments?: unknown };
+        let args: unknown = fn.arguments ?? {};
+        if (typeof args === "string") {
+          try { args = JSON.parse(args || "{}"); } catch { args = {}; }
+        }
+        if (typeof tc.id === "string" && fn.name) names.set(tc.id, fn.name);
+        return { function: { name: fn.name ?? "", arguments: args } };
+      });
+    }
+    if (m.role === "tool" && typeof m.tool_call_id === "string") {
+      const name = names.get(m.tool_call_id);
+      if (name) m.tool_name = name;
+      delete m.tool_call_id;
+    }
+    return m;
   });
 }
