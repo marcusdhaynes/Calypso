@@ -264,6 +264,8 @@ function registerIpc(): void {
     "getAppInfo",
     "getModelStatus",
     "getFirstRunPlan",
+    "ensureBrowserRuntime",
+    "getBrowserRuntimeStatus",
     "listWorkers",
     "createWorker",
     "updateWorker",
@@ -294,7 +296,7 @@ function registerIpc(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   startCoreProcess();
   registerIpc();
   createTray();
@@ -303,7 +305,97 @@ app.whenReady().then(() => {
   app.on("activate", () => {
     showMainWindow();
   });
+
+  // Headless e2e helpers (CALYPSO_E2E_SMOKE / CALYPSO_E2E_VERIFY).
+  if (process.env.CALYPSO_E2E_SMOKE === "1" || process.env.CALYPSO_E2E_VERIFY === "1") {
+    void runE2eProbe();
+  }
 });
+
+async function runE2eProbe(): Promise<void> {
+  const outPath = process.env.CALYPSO_E2E_OUT ?? "/tmp/calypso-e2e.json";
+  const shotPath = process.env.CALYPSO_E2E_SHOT ?? "/tmp/calypso-e2e.png";
+  // Wait for core to come up.
+  for (let i = 0; i < 40; i++) {
+    try {
+      await callCore("getAppInfo");
+      break;
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
+  try {
+    if (process.env.CALYPSO_E2E_SMOKE === "1") {
+      const worker = await callCore("createWorker", {
+        worker: {
+          id: "e2e_worker_1",
+          name: "E2E Worker",
+          avatar: "e2e",
+          role: "tester",
+          personality: "precise",
+          instructions: "Persist across restarts",
+          skills: ["test"],
+          tools: [],
+          permissions: [],
+          preferredModel: "normal",
+          workspace: ".",
+          autonomyLevel: "ask",
+          status: "idle",
+        },
+      });
+      const workers = (await callCore("listWorkers")) as unknown[];
+      // Give the window a moment to paint.
+      await new Promise((r) => setTimeout(r, 1500));
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const img = await mainWindow.webContents.capturePage();
+        const { writeFileSync, mkdirSync } = await import("node:fs");
+        const { dirname } = await import("node:path");
+        mkdirSync(dirname(shotPath), { recursive: true });
+        writeFileSync(shotPath, img.toPNG());
+      }
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(
+        outPath,
+        JSON.stringify({ ok: true, phase: "smoke", worker, workers: workers.length, shotPath }, null, 2)
+      );
+      quitting = true;
+      app.quit();
+      return;
+    }
+
+    if (process.env.CALYPSO_E2E_VERIFY === "1") {
+      const workers = (await callCore("listWorkers")) as Array<{ id: string; name: string }>;
+      const found = workers.some((w) => w.id === "e2e_worker_1");
+      await new Promise((r) => setTimeout(r, 1000));
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const img = await mainWindow.webContents.capturePage();
+        const { writeFileSync, mkdirSync } = await import("node:fs");
+        const { dirname } = await import("node:path");
+        mkdirSync(dirname(shotPath), { recursive: true });
+        writeFileSync(shotPath, img.toPNG());
+      }
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(
+        outPath,
+        JSON.stringify({ ok: found, phase: "verify", workers, shotPath }, null, 2)
+      );
+      quitting = true;
+      app.quit();
+    }
+  } catch (err) {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      outPath,
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }, null, 2)
+    );
+    quitting = true;
+    app.quit();
+  }
+}
 
 app.on("before-quit", () => {
   quitting = true;

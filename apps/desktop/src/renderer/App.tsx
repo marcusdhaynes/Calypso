@@ -245,6 +245,42 @@ export function App() {
     });
   }, []);
 
+  /** Dedicated Live route: start frame watch so LiveComputerView can bind. */
+  useEffect(() => {
+    const api = window.calypso;
+    if (!api || nav !== "live") return;
+    watchingFrames.current = true;
+    void api
+      .watchFrames?.()
+      .then((result) => {
+        const sessions = (result as { sessions?: ControlSession[] } | undefined)?.sessions;
+        if (sessions?.length) {
+          const active = sessions.find((s) => s.status !== "stopped") ?? sessions[0];
+          if (active) setControlSession(active);
+          return;
+        }
+        setControlSession((prev) => {
+          if (prev && prev.status !== "stopped") return prev;
+          return {
+            id: "live-preview",
+            kind: "computer",
+            workerId: selectedWorkerId ?? workers[0]?.id ?? "none",
+            objective: "Live computer view — waiting for a control session",
+            currentAction: "No active session yet (Windows control streams frames when available)",
+            progressPercent: 0,
+            status: "stopped",
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      watchingFrames.current = false;
+      void api.unwatchFrames?.().catch(() => undefined);
+    };
+  }, [nav, selectedWorkerId, workers]);
+
   const selected = useMemo(
     () => workers.find((w) => w.id === selectedWorkerId) ?? null,
     [workers, selectedWorkerId]
@@ -434,17 +470,24 @@ export function App() {
               {navLabel(nav)}
             </div>
             <div style={{ fontSize: 12.5, color: colors.textMuted }}>
-              {selected ? `Talking with ${selected.name}` : "Home"}
+              {nav === "live"
+                ? (controlSession?.objective ?? "Computer / browser mirror")
+                : selected
+                  ? `Talking with ${selected.name}`
+                  : "Home"}
+              {modelStatus && !modelStatus.ready && nav !== "live"
+                ? ` · ${modelStatus.message ?? "Model unavailable"}`
+                : ""}
             </div>
           </div>
         </header>
 
 
-        {controlSession && controlSession.status !== "stopped" ? (
+        {(nav === "live" || (controlSession && controlSession.status !== "stopped")) && controlSession ? (
           <div style={{ padding: "16px 24px 0", maxWidth: 960, width: "100%", margin: "0 auto" }}>
             <LiveComputerView
               session={controlSession}
-              worker={workers.find((w) => w.id === controlSession.workerId)}
+              worker={workers.find((w) => w.id === controlSession.workerId) ?? selected ?? undefined}
               frame={controlFrame}
               onCommand={(command) => {
                 void window.calypso?.controlCommand?.(command);
@@ -534,6 +577,8 @@ function navLabel(id: SidebarNavId): string {
       return "Teams";
     case "projects":
       return "Projects";
+    case "live":
+      return "Live computer";
     case "recent":
       return "Recent";
     case "routines":

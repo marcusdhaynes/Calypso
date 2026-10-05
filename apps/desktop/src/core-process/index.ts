@@ -170,8 +170,17 @@ orchestrator.bus.subscribe((event: CalypsoEvent) => {
 });
 
 // ---- Tools ----
+const userDataRoot = path.dirname(databasePath);
 const browserControl: BrowserControl = createBrowserControl({
-  dataRoot: path.join(path.dirname(databasePath), "browser"),
+  dataRoot: path.join(userDataRoot, "browser"),
+  browsersPath: path.join(userDataRoot, "ms-playwright"),
+  onRuntimeProgress: (progress) => {
+    orchestrator.bus.publish({
+      type: "browser.runtime.progress",
+      progress,
+      at: Date.now(),
+    });
+  },
 });
 for (const tool of browserControl.tools) {
   orchestrator.registerTool(tool);
@@ -180,9 +189,20 @@ for (const tool of browserControl.tools) {
 /** Per-worker Playwright sessions (Spin): open before browse; tools take sessionId. */
 const browserSessions = new Map<string, string>();
 
+async function ensureBrowserRuntimeReady() {
+  const status = await browserControl.ensureRuntime();
+  orchestrator.bus.publish({
+    type: "browser.runtime.ready",
+    status,
+    at: Date.now(),
+  });
+  return status;
+}
+
 async function ensureBrowserSession(workerId: string, projectId?: string): Promise<string> {
   const existing = browserSessions.get(workerId);
   if (existing) return existing;
+  await ensureBrowserRuntimeReady();
   const session = await browserControl.manager.openSession({
     workerId,
     projectId,
@@ -463,6 +483,19 @@ async function handle(req: CoreRequest): Promise<void> {
         respond({ id: req.id, ok: true, result: toFirstRunPlan(plan) });
         return;
       }
+      case "ensureBrowserRuntime": {
+        const status = await ensureBrowserRuntimeReady();
+        respond({ id: req.id, ok: true, result: status });
+        return;
+      }
+      case "getBrowserRuntimeStatus": {
+        respond({
+          id: req.id,
+          ok: true,
+          result: browserControl.getRuntimeStatus(),
+        });
+        return;
+      }
       case "listWorkers":
         respond({ id: req.id, ok: true, result: orchestrator.workers.list() });
         return;
@@ -595,13 +628,33 @@ async function handle(req: CoreRequest): Promise<void> {
         }
         respond({ id: req.id, ok: true, result: null });
         return;
-      case "watchFrames":
-        if (windowsControl && isWindows) {
+      case "watchFrames": {
+        if (windowsControl) {
           unwatchFrames?.();
+          // Ensure at least one session so LiveComputerView has something to bind.
+          const existing = windowsControl.controller.listSessions().find((s) => s.status !== "stopped");
+          if (!existing) {
+            const worker = orchestrator.workers.list()[0];
+            if (worker) {
+              windowsControl.controller.openSession({
+                workerId: worker.id,
+                objective: "Live computer view",
+              });
+            }
+          }
           unwatchFrames = windowsControl.controller.watchFrames();
         }
-        respond({ id: req.id, ok: true, result: null });
+        respond({
+          id: req.id,
+          ok: true,
+          result: {
+            available: !!windowsControl,
+            windowsOnly: isWindows,
+            sessions: windowsControl?.controller.listSessions() ?? [],
+          },
+        });
         return;
+      }
       case "unwatchFrames":
         unwatchFrames?.();
         unwatchFrames = null;

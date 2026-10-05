@@ -757,6 +757,28 @@ export interface Routine {
 }
 
 // ---------------------------------------------------------------------------
+// Browser runtime (Spin) — Chromium download into userData
+// ---------------------------------------------------------------------------
+
+export type BrowserRuntimePhase =
+  | "checking"
+  | "downloading"
+  | "extracting"
+  | "ready"
+  | "error";
+
+export interface BrowserRuntimeProgress {
+  phase: BrowserRuntimePhase;
+  percent?: number;
+  message: string;
+}
+
+export interface BrowserRuntimeStatus {
+  installed: boolean;
+  browsersPath: string;
+  executablePath: string;
+}
+
 // Event bus
 // ---------------------------------------------------------------------------
 
@@ -804,6 +826,16 @@ export type CalypsoEvent =
   | { type: "control.action.result"; sessionId: ControlSessionId; result: ActionResult }
   | { type: "project.updated"; project: Project }
   | { type: "artifact.created"; artifact: Artifact }
+  | {
+      type: "browser.runtime.progress";
+      progress: BrowserRuntimeProgress;
+      at: number;
+    }
+  | {
+      type: "browser.runtime.ready";
+      status: BrowserRuntimeStatus;
+      at: number;
+    }
   | { type: "system.error"; message: string; cause?: string; at: number };
 
 export type CalypsoEventType = CalypsoEvent["type"];
@@ -889,6 +921,8 @@ export type CoreRequest =
   | { id: string; method: "getAppInfo"; params?: undefined }
   | { id: string; method: "getModelStatus"; params?: undefined }
   | { id: string; method: "getFirstRunPlan"; params?: undefined }
+  | { id: string; method: "ensureBrowserRuntime"; params?: undefined }
+  | { id: string; method: "getBrowserRuntimeStatus"; params?: undefined }
   | { id: string; method: "listWorkers"; params?: undefined }
   | { id: string; method: "createWorker"; params: { worker: WorkerInput } }
   | { id: string; method: "updateWorker"; params: { worker: Worker } }
@@ -989,7 +1023,7 @@ export interface CalypsoIpcApi {
   ): Promise<Message>;
   resolvePermission(requestId: string, allow: boolean): Promise<void>;
   controlCommand(command: ControlSessionCommand): Promise<void>;
-  watchFrames(): Promise<void>;
+  watchFrames(): Promise<{ available: boolean; windowsOnly: boolean; sessions: ControlSession[] }>;
   unwatchFrames(): Promise<void>;
   stopAll(): Promise<void>;
   pauseWorkers(): Promise<void>;
@@ -1000,6 +1034,8 @@ export interface CalypsoIpcApi {
   ): Promise<{ sessionId: BrowserSessionId; workerId: WorkerId }>;
   shutdown(): Promise<void>;
   getFirstRunPlan(): Promise<FirstRunPlan>;
+  ensureBrowserRuntime(): Promise<BrowserRuntimeStatus>;
+  getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus>;
   getModelStatus(): Promise<ModelStatus>;
   getAppInfo(): Promise<AppInfo>;
   /** Tray menu actions (new-command, etc.). */

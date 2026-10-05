@@ -7,6 +7,7 @@ export type SidebarNavId =
   | "workers"
   | "teams"
   | "projects"
+  | "live"
   | "recent"
   | "routines"
   | "settings";
@@ -33,6 +34,7 @@ const DEFAULT_ITEMS: SidebarNavItem[] = [
   { id: "workers", label: "Workers" },
   { id: "teams", label: "Teams" },
   { id: "projects", label: "Projects" },
+  { id: "live", label: "Live computer" },
   { id: "recent", label: "Recent" },
   { id: "routines", label: "Routines" },
   { id: "settings", label: "Settings" },
