@@ -30,3 +30,6 @@ export type { PermissionToastProps } from "./PermissionToast.js";
 
 export { RuntimeProgressBanner } from "./RuntimeProgressBanner.js";
 export type { RuntimeProgressBannerProps, RuntimeProgress } from "./RuntimeProgressBanner.js";
+
+export { ArtifactsPanel } from "./ArtifactsPanel.js";
+export type { ArtifactsPanelProps } from "./ArtifactsPanel.js";

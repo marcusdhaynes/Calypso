@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  Artifact,
+  ArtifactId,
+  ArtifactInput,
   CalypsoEvent,
   CalypsoIpcApi,
   ControlSessionCommand,
@@ -75,6 +78,9 @@ const api: CalypsoIpcApi = {
   createRoutine: (routine: RoutineInput) => ipcRenderer.invoke("calypso:createRoutine", routine),
   updateRoutine: (routine: Routine) => ipcRenderer.invoke("calypso:updateRoutine", routine),
   deleteRoutine: (routineId: RoutineId) => ipcRenderer.invoke("calypso:deleteRoutine", routineId),
+  listArtifacts: () => ipcRenderer.invoke("calypso:listArtifacts"),
+  createArtifact: (artifact: ArtifactInput) => ipcRenderer.invoke("calypso:createArtifact", artifact),
+  deleteArtifact: (artifactId: ArtifactId) => ipcRenderer.invoke("calypso:deleteArtifact", artifactId),
   sendWorkerChat: (
     fromWorkerId: WorkerId,
     toWorkerIds: WorkerId[],

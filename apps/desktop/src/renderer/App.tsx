@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { Artifact, BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
+  ArtifactsPanel,
   Avatar,
   ChatComposer,
   FirstRunWizard,
@@ -119,12 +120,17 @@ export function App() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
 
   const refreshTeams = useCallback(() => {
     void window.calypso?.listTeams?.().then(setTeams).catch(() => undefined);
   }, []);
   const refreshRoutines = useCallback(() => {
     void window.calypso?.listRoutines?.().then(setRoutines).catch(() => undefined);
+  }, []);
+  const refreshArtifacts = useCallback(() => {
+    void window.calypso?.listArtifacts?.().then(setArtifacts).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -166,6 +172,7 @@ export function App() {
     }
     void api.listTeams?.().then(setTeams).catch(() => undefined);
     void api.listRoutines?.().then(setRoutines).catch(() => undefined);
+    void api.listArtifacts?.().then(setArtifacts).catch(() => undefined);
 
     const offEvent = api.onEvent?.((event) => {
       if (event.type === "worker.status" || event.type === "worker.updated") {
@@ -183,6 +190,9 @@ export function App() {
       }
       if (event.type === "team.updated") {
         void api.listTeams?.().then(setTeams).catch(() => undefined);
+      }
+      if (event.type === "artifact.created") {
+        void api.listArtifacts?.().then(setArtifacts).catch(() => undefined);
       }
       if (event.type === "routine.updated" || event.type === "routine.fired") {
         void api.listRoutines?.().then(setRoutines).catch(() => undefined);
@@ -697,6 +707,8 @@ export function App() {
             <div style={{ fontSize: 12.5, color: colors.textMuted }}>
               {nav === "live"
                 ? (controlSession?.objective ?? "Waiting for an active control session")
+                : nav === "artifacts"
+                  ? `${artifacts.length} item${artifacts.length === 1 ? "" : "s"} · screenshots, extracts, files`
                 : nav === "teams"
                   ? selectedTeam
                     ? `Team chat · ${selectedTeam.name}`
@@ -799,12 +811,25 @@ export function App() {
             display: "flex",
             flexDirection: "column",
             gap: 14,
-            maxWidth: 820,
+            maxWidth: nav === "artifacts" ? 960 : 820,
             width: "100%",
             margin: "0 auto",
           }}
         >
-          {lines.map((line) => (
+          {nav === "artifacts" ? (
+            <ArtifactsPanel
+              artifacts={artifacts}
+              selectedId={selectedArtifactId}
+              onSelect={(a) => setSelectedArtifactId(a.id)}
+              onDelete={(id) => {
+                void window.calypso?.deleteArtifact?.(id).then(() => {
+                  setArtifacts((prev) => prev.filter((x) => x.id !== id));
+                  setSelectedArtifactId((cur) => (cur === id ? null : cur));
+                });
+              }}
+            />
+          ) : null}
+          {nav === "artifacts" ? null : lines.map((line) => (
             <article
               key={line.id}
               className="cal-fade-in"
@@ -839,6 +864,7 @@ export function App() {
           ))}
         </div>
 
+        {nav === "artifacts" ? null : (
         <ChatComposer
           onSend={onSend}
           disabled={modelWarming}
@@ -852,6 +878,7 @@ export function App() {
                   : "Message Calypso…"
           }
         />
+        )}
       </AppShell>
 
       {browserRuntimeProgress ? (
@@ -924,6 +951,8 @@ function navLabel(id: SidebarNavId): string {
       return "Recent";
     case "routines":
       return "Routines";
+    case "artifacts":
+      return "Artifacts";
     case "settings":
       return "Settings";
   }

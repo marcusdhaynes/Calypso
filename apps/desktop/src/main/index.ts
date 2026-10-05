@@ -272,6 +272,10 @@ function registerIpc(): void {
         return callCore(method, { taskId: args[0] });
       case "createRoutine":
         return callCore(method, { routine: args[0] });
+      case "createArtifact":
+        return callCore(method, { artifact: args[0] });
+      case "deleteArtifact":
+        return callCore(method, { artifactId: args[0] });
       case "updateRoutine":
         return callCore(method, { routine: args[0] });
       case "deleteRoutine":
@@ -328,6 +332,9 @@ function registerIpc(): void {
     "createRoutine",
     "updateRoutine",
     "deleteRoutine",
+    "listArtifacts",
+    "createArtifact",
+    "deleteArtifact",
     "sendWorkerChat",
     "shutdown",
   ];

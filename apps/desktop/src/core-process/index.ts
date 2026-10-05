@@ -480,6 +480,19 @@ async function handle(req: CoreRequest): Promise<void> {
         respond({ id: req.id, ok: true, result: ok });
         return;
       }
+      case "listArtifacts":
+        respond({ id: req.id, ok: true, result: orchestrator.listArtifacts() });
+        return;
+      case "createArtifact": {
+        const artifact = orchestrator.createArtifact(req.params.artifact);
+        respond({ id: req.id, ok: true, result: artifact });
+        return;
+      }
+      case "deleteArtifact": {
+        const ok = orchestrator.deleteArtifact(req.params.artifactId);
+        respond({ id: req.id, ok: true, result: ok });
+        return;
+      }
       case "sendWorkerChat": {
         const { fromWorkerId, toWorkerIds, content, teamId, conversationId } = req.params;
         const msg = orchestrator.sendWorkerMessage(fromWorkerId, toWorkerIds, content, {

@@ -118,3 +118,10 @@ Worker, WorkerStatus, AutonomyLevel, Team, Project, Artifact, Conversation, Mess
 - One Chromium process, persistent storage per session under `dataRoot/<sessionId>/`. Headless by default; set `CALYPSO_BROWSER_HEADED=1` for a visible window.
 - Smoke: `node packages/browser/test/smoke.mjs` (after `npm run build -w @calypso/browser`). Runtime smoke: `node packages/browser/test/runtime-smoke.mjs`.
 - **Contract note (Spin):** added `BrowserRuntimeProgress` / `BrowserRuntimeStatus`, events `browser.runtime.progress` + `browser.runtime.ready`, and CoreRequest methods `ensureBrowserRuntime` / `getBrowserRuntimeStatus`.
+
+## Artifacts panel (Spin)
+
+Screenshots (`browser.snapshot`), extracts (`browser.extract`), and downloads (`browser.download`) are persisted to SQLite (`artifacts` table, schema v2) and files under `userData/artifacts/`. UI: sidebar **Artifacts** → `ArtifactsPanel`. IPC: `listArtifacts` / `createArtifact` / `deleteArtifact`; event `artifact.created`.
+
+**Contract note (Spin):** added `ArtifactInput`, CoreRequest methods `listArtifacts` / `createArtifact` / `deleteArtifact`.
+

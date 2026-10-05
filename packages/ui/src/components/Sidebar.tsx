@@ -10,6 +10,7 @@ export type SidebarNavId =
   | "live"
   | "recent"
   | "routines"
+  | "artifacts"
   | "settings";
 
 export interface SidebarNavItem {
@@ -37,6 +38,7 @@ const DEFAULT_ITEMS: SidebarNavItem[] = [
   { id: "live", label: "Live computer" },
   { id: "recent", label: "Recent" },
   { id: "routines", label: "Routines" },
+  { id: "artifacts", label: "Artifacts" },
   { id: "settings", label: "Settings" },
 ];
 

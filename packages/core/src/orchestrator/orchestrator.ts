@@ -1,3 +1,4 @@
+import path from "node:path";
 import type {
   Conversation,
   ConversationId,
@@ -30,6 +31,7 @@ import { InMemoryMemoryStore } from "../memory/memory-store.js";
 import { RoutineScheduler } from "../scheduler/scheduler.js";
 import { DefaultPermissionGate } from "../permissions/gate.js";
 import { CalypsoDatabase, defaultDatabasePath } from "../db/database.js";
+import { ArtifactRegistry } from "../artifacts/registry.js";
 import type { MemoryStore } from "@calypso/shared";
 import { TaskDispatcher } from "../runtime/dispatcher.js";
 import { Planner } from "../runtime/planner.js";
@@ -91,6 +93,7 @@ export class Orchestrator {
   readonly projects: ProjectRegistry;
   readonly memory: MemoryStore;
   readonly scheduler: RoutineScheduler;
+  readonly artifacts: ArtifactRegistry;
   readonly gate: DefaultPermissionGate;
   readonly modelRouter: ModelRouter | undefined;
   readonly embeddings: EmbeddingProvider | undefined;
@@ -124,6 +127,17 @@ export class Orchestrator {
     this.projects = new ProjectRegistry(this.database);
     this.tasks = new PersistentTaskGraph(this.database);
     this.scheduler = new RoutineScheduler(this.database);
+    const artifactsRoot =
+      opts.userDataRoot
+        ? path.join(opts.userDataRoot, "artifacts")
+        : dbPath && dbPath !== ":memory:"
+          ? path.join(path.dirname(dbPath), "artifacts")
+          : path.join(process.cwd(), ".calypso-artifacts");
+    this.artifacts = new ArtifactRegistry({
+      database: this.database,
+      artifactsRoot,
+      bus: this.bus,
+    });
     this.memory = this.database
       ? new SqliteMemoryStore(this.database, this.embeddings)
       : new InMemoryMemoryStore();
@@ -342,6 +356,11 @@ export class Orchestrator {
       }
 
       this.bus.publish({ type: "tool.result", result: finalResult });
+      try {
+        this.artifacts.captureFromTool(worker, toolCall, finalResult);
+      } catch {
+        // artifact capture is best-effort
+      }
       return finalResult;
     } finally {
       this.workers.setStatus(worker.id, "idle");
@@ -546,6 +565,18 @@ export class Orchestrator {
     const linked = this.teams.get(saved.id) ?? saved;
     this.bus.publish({ type: "team.updated", team: linked });
     return linked;
+  }
+
+  listArtifacts() {
+    return this.artifacts.list();
+  }
+
+  createArtifact(input: Parameters<ArtifactRegistry["create"]>[0]) {
+    return this.artifacts.create(input);
+  }
+
+  deleteArtifact(id: string): boolean {
+    return this.artifacts.delete(id);
   }
 
   createRoutine(input: RoutineInput): Routine {

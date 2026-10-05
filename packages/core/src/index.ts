@@ -23,3 +23,6 @@ export type { PlanRequest, PlanResult } from "./runtime/planner.js";
 export { createTeamTools } from "./runtime/team-tools.js";
 export { buildWorkerContext } from "./runtime/context.js";
 export { newId } from "./runtime/ids.js";
+
+export { ArtifactRegistry } from "./artifacts/registry.js";
+export type { ArtifactRegistryOptions } from "./artifacts/registry.js";

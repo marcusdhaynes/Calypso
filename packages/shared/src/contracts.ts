@@ -257,6 +257,18 @@ export interface Artifact {
   updatedAt: number;
 }
 
+/** Create payload for Artifacts panel (screenshots / extracts / files). */
+export interface ArtifactInput {
+  kind: ArtifactKind;
+  title: string;
+  uri: string;
+  mimeType?: string;
+  projectId?: ProjectId;
+  taskId?: TaskId;
+  createdBy: MessageAuthor;
+  metadata?: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Conversation & Message
 // ---------------------------------------------------------------------------
@@ -1085,6 +1097,9 @@ export type CoreRequest =
   | { id: string; method: "createRoutine"; params: { routine: RoutineInput } }
   | { id: string; method: "updateRoutine"; params: { routine: Routine } }
   | { id: string; method: "deleteRoutine"; params: { routineId: RoutineId } }
+  | { id: string; method: "listArtifacts"; params?: undefined }
+  | { id: string; method: "createArtifact"; params: { artifact: ArtifactInput } }
+  | { id: string; method: "deleteArtifact"; params: { artifactId: ArtifactId } }
   | {
       id: string;
       method: "sendWorkerChat";
@@ -1155,6 +1170,9 @@ export interface CalypsoIpcApi {
   createRoutine(routine: RoutineInput): Promise<Routine>;
   updateRoutine(routine: Routine): Promise<Routine>;
   deleteRoutine(routineId: RoutineId): Promise<boolean>;
+  listArtifacts(): Promise<Artifact[]>;
+  createArtifact(artifact: ArtifactInput): Promise<Artifact>;
+  deleteArtifact(artifactId: ArtifactId): Promise<boolean>;
   sendWorkerChat(
     fromWorkerId: WorkerId,
     toWorkerIds: WorkerId[],

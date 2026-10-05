@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type {
+  Artifact,
   Conversation,
   Message,
   Project,
@@ -11,7 +12,7 @@ import type {
   Worker,
 } from "@calypso/shared";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -84,6 +85,19 @@ CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory(kind);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_routines_due ON routines(enabled, next_run_at);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  json TEXT NOT NULL,
+  project_id TEXT,
+  task_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON artifacts(kind);
 `;
 
 export interface OpenDatabaseOptions {
@@ -93,7 +107,7 @@ export interface OpenDatabaseOptions {
 
 /**
  * Calypso persistence root — one SQLite file shared by workers, teams,
- * projects, tasks, routines, conversations, messages, and memory.
+ * projects, tasks, routines, conversations, messages, memory, and artifacts.
  */
 export class CalypsoDatabase {
   readonly filePath: string;
@@ -286,6 +300,50 @@ export class CalypsoDatabase {
            created_at = excluded.created_at`
       )
       .run(message.id, message.conversationId, JSON.stringify(message), message.createdAt);
+  }
+
+
+  // ---- artifacts (Spin) ----
+
+  upsertArtifact(artifact: Artifact): void {
+    this.db
+      .prepare(
+        `INSERT INTO artifacts(id, kind, json, project_id, task_id, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           kind = excluded.kind,
+           json = excluded.json,
+           project_id = excluded.project_id,
+           task_id = excluded.task_id,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        artifact.id,
+        artifact.kind,
+        JSON.stringify(artifact),
+        artifact.projectId ?? null,
+        artifact.taskId ?? null,
+        artifact.createdAt,
+        artifact.updatedAt,
+      );
+  }
+
+  listArtifacts(): Artifact[] {
+    const rows = this.db
+      .prepare("SELECT json FROM artifacts ORDER BY created_at DESC")
+      .all() as Array<{ json: string }>;
+    return rows.map((r) => JSON.parse(r.json) as Artifact);
+  }
+
+  getArtifact(id: string): Artifact | undefined {
+    const row = this.db.prepare("SELECT json FROM artifacts WHERE id = ?").get(id) as
+      | { json: string }
+      | undefined;
+    return row ? (JSON.parse(row.json) as Artifact) : undefined;
+  }
+
+  deleteArtifact(id: string): boolean {
+    return this.deleteId("artifacts", id);
   }
 
   listMessages(conversationId: string): Message[] {
