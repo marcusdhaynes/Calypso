@@ -47,10 +47,11 @@ SQLite via **better-sqlite3** in `@calypso/core` (`CalypsoDatabase` + `SqliteMem
 - **`WorkerRuntime`**: Plan → Execute → Observe → Verify loop with bounded context (instructions, memory scopes, recent messages, tool schemas), `ModelRouter.resolve`, streaming via `provider.stream`, gated `executeToolCall`, max-iteration / timeout / AbortSignal, retry-once on transient model errors. Publishes `worker.status` and `CoreStreamPush` tokens; writes worker Messages + episode memory on completion.
 - **`Planner`**: Leader produces structured Plan JSON → validate/repair → `materializePlan` → assign steps by `suggestedRole` / skills. Root task waits; children run when deps complete.
 - **`TaskDispatcher`**: Background concurrency-limited queue (default 2), one task per worker, `cancel` / `retry` / `pause` / `resume`, parent completion when all children succeed (fail if a child fails). Routine scheduler fires create tasks that flow into the dispatcher.
-- **Worker messaging**: `sendWorkerMessage` → `bus.chat` + persisted Message; built-in tools `team.message` (read) and `team.delegate` (write).
+- **Worker messaging**: `sendWorkerMessage` → `bus.chat` + persisted Message (auto-resolves team group conversation via `ensureTeamConversation` / `Team.conversationId`); built-in tools `team.message` (read) and `team.delegate` (write). Desktop Teams nav shows the shared chat; `createTeam` wires it.
+- **Routines E2E**: `createRoutine` fills `nextRunAt`, scheduler tick enqueues tasks, desktop Routines nav lists/creates interval routines; IPC `list/create/update/deleteRoutine`.
 - **Desktop entry**: prefer `orchestrator.handleUserMessage({ conversationId, content, workerId? })` + `orchestrator.setStreamHandler(push => …)` instead of a monolithic one-shot prompt. Also: `pauseWorkers` / `resumeWorkers` / `cancelTask` / `retryTask` on the Orchestrator.
 
-**Contract additions (Anky, additive):** `Task.conversationId?` / `teamId?` / `retryCount?`; `PlanStep.suggestedRole?` / `suggestedWorkerId?`; `ChatMessage.tool_calls?` + `ChatToolCall`; CoreRequest / CalypsoIpcApi `cancelTask` / `retryTask` (wired through desktop IPC).
+**Contract additions (Anky, additive):** `Team.conversationId?`; `RoutineInput`; CoreRequest/IPC `listRoutines`/`createRoutine`/`updateRoutine`/`deleteRoutine`/`sendWorkerChat`; events `routine.updated`/`team.updated`.  `Task.conversationId?` / `teamId?` / `retryCount?`; `PlanStep.suggestedRole?` / `suggestedWorkerId?`; `ChatMessage.tool_calls?` + `ChatToolCall`; CoreRequest / CalypsoIpcApi `cancelTask` / `retryTask` (wired through desktop IPC).
 
 ### Models
 

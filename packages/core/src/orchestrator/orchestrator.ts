@@ -1,13 +1,18 @@
 import type {
+  Conversation,
   ConversationId,
   CoreStreamPush,
   EmbeddingProvider,
   Message,
   ModelRouter,
   Plan,
+  Routine,
+  RoutineInput,
   Task,
   TaskId,
+  Team,
   TeamId,
+  TeamInput,
   Tool,
   ToolCall,
   ToolResult,
@@ -136,6 +141,8 @@ export class Orchestrator {
     }
 
     this.scheduler.start((routine) => {
+      const team = routine.teamId ? this.teams.get(routine.teamId) : undefined;
+      const conversationId = team?.conversationId;
       const task = this.createTask({
         id: newId("task"),
         title: routine.taskTemplate.title,
@@ -146,6 +153,7 @@ export class Orchestrator {
         assignedWorkerId: routine.workerId,
         projectId: routine.projectId,
         teamId: routine.teamId,
+        conversationId,
         taskClass: routine.taskTemplate.taskClass,
       });
       this.bus.publish({
@@ -478,7 +486,93 @@ export class Orchestrator {
   }
 
   /**
+   * Create or return the shared group-chat conversation for a team.
+   * Links `team.conversationId` and keeps participantWorkerIds in sync.
+   */
+  ensureTeamConversation(team: Team): Conversation {
+    const now = Date.now();
+    if (team.conversationId && this.database) {
+      const existing = this.database
+        .listConversations()
+        .find((c) => c.id === team.conversationId);
+      if (existing) {
+        const merged: Conversation = {
+          ...existing,
+          participantWorkerIds: [...new Set([...existing.participantWorkerIds, ...team.memberIds])],
+          teamId: team.id,
+          projectId: team.projectId ?? existing.projectId,
+          title: existing.title || `${team.name} chat`,
+          updatedAt: now,
+        };
+        this.database.upsertConversation(merged);
+        this.bus.publish({ type: "conversation.updated", conversation: merged });
+        return merged;
+      }
+    }
+
+    const conversation: Conversation = {
+      id: team.conversationId ?? newId("conv"),
+      title: `${team.name} chat`,
+      participantWorkerIds: [...team.memberIds],
+      teamId: team.id,
+      projectId: team.projectId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database?.upsertConversation(conversation);
+    this.bus.publish({ type: "conversation.updated", conversation });
+
+    if (team.conversationId !== conversation.id) {
+      const linked = this.teams.upsert({
+        ...team,
+        conversationId: conversation.id,
+        updatedAt: now,
+      });
+      this.bus.publish({ type: "team.updated", team: linked });
+    }
+    return conversation;
+  }
+
+  /** Upsert a team and ensure its group-chat conversation exists. */
+  createTeam(input: TeamInput): Team {
+    const now = Date.now();
+    const team: Team = {
+      ...input,
+      createdAt: input.createdAt ?? now,
+      updatedAt: now,
+    };
+    const saved = this.teams.upsert(team);
+    this.ensureTeamConversation(saved);
+    const linked = this.teams.get(saved.id) ?? saved;
+    this.bus.publish({ type: "team.updated", team: linked });
+    return linked;
+  }
+
+  createRoutine(input: RoutineInput): Routine {
+    const now = Date.now();
+    const routine = this.scheduler.upsert({
+      ...input,
+      createdAt: input.createdAt ?? now,
+      updatedAt: now,
+      enabled: input.enabled ?? true,
+    });
+    this.bus.publish({ type: "routine.updated", routine });
+    return routine;
+  }
+
+  updateRoutine(routine: Routine): Routine {
+    const saved = this.scheduler.upsert({ ...routine, updatedAt: Date.now() });
+    this.bus.publish({ type: "routine.updated", routine: saved });
+    return saved;
+  }
+
+  deleteRoutine(id: string): boolean {
+    return this.scheduler.delete(id);
+  }
+
+  /**
    * Persist + publish a worker-to-worker message (bus.chat) into the team conversation.
+   * Resolves conversationId from opts, team.conversationId, or ensureTeamConversation.
    */
   sendWorkerMessage(
     fromWorkerId: WorkerId,
@@ -487,17 +581,25 @@ export class Orchestrator {
     opts?: { taskId?: TaskId; conversationId?: ConversationId; teamId?: TeamId }
   ): Message | undefined {
     const from = this.workers.get(fromWorkerId);
+    const teamId = opts?.teamId ?? from?.teamId;
+    const team = teamId ? this.teams.get(teamId) : undefined;
+
+    let conversationId = opts?.conversationId ?? team?.conversationId;
+    if (!conversationId && team) {
+      conversationId = this.ensureTeamConversation(team).id;
+    }
+
     this.bus.publish({
       type: "bus.chat",
       fromWorkerId,
       toWorkerIds,
-      teamId: opts?.teamId ?? from?.teamId,
+      teamId,
       content,
       taskId: opts?.taskId,
       at: Date.now(),
     });
 
-    if (!opts?.conversationId) return undefined;
+    if (!conversationId) return undefined;
 
     const addressed =
       toWorkerIds.length > 0
@@ -506,10 +608,10 @@ export class Orchestrator {
 
     const message: Message = {
       id: newId("msg"),
-      conversationId: opts.conversationId,
+      conversationId,
       author: { type: "worker", workerId: fromWorkerId },
       content: addressed,
-      taskId: opts.taskId,
+      taskId: opts?.taskId,
       createdAt: Date.now(),
     };
     return this.recordMessage(message);

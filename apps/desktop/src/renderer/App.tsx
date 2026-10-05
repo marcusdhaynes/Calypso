@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   Avatar,
@@ -114,6 +114,18 @@ export function App() {
     },
   ]);
   const [conversationId, setConversationId] = useState<string>("local-preview");
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [routines, setRoutines] = useState<Routine[]>([]);
+
+  const refreshTeams = useCallback(() => {
+    void window.calypso?.listTeams?.().then(setTeams).catch(() => undefined);
+  }, []);
+  const refreshRoutines = useCallback(() => {
+    void window.calypso?.listRoutines?.().then(setRoutines).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const api = window.calypso;
@@ -152,6 +164,8 @@ export function App() {
         })
         .catch(() => undefined);
     }
+    void api.listTeams?.().then(setTeams).catch(() => undefined);
+    void api.listRoutines?.().then(setRoutines).catch(() => undefined);
 
     const offEvent = api.onEvent?.((event) => {
       if (event.type === "worker.status" || event.type === "worker.updated") {
@@ -159,12 +173,29 @@ export function App() {
       }
       if (event.type === "message.created") {
         const m = event.message;
+        if (m.conversationId !== conversationIdRef.current) return;
         if (m.author.type === "user") return;
         if (streamingIds.current.has(m.id)) return;
         setLines((prev) => {
           if (prev.some((l) => l.id === m.id)) return prev;
           return [...prev, messageToLine(m)];
         });
+      }
+      if (event.type === "team.updated") {
+        void api.listTeams?.().then(setTeams).catch(() => undefined);
+      }
+      if (event.type === "routine.updated" || event.type === "routine.fired") {
+        void api.listRoutines?.().then(setRoutines).catch(() => undefined);
+        if (event.type === "routine.fired") {
+          setLines((prev) => [
+            ...prev,
+            {
+              id: `routine-${event.routineId}-${event.at}`,
+              role: "system",
+              content: `Routine fired → task ${event.taskId}`,
+            },
+          ]);
+        }
       }
       if (event.type === "permission.asked") {
         setPermissionAsk({
@@ -230,6 +261,7 @@ export function App() {
     });
 
     const offStream = api.onStream?.((push) => {
+      if (push.conversationId && push.conversationId !== conversationIdRef.current) return;
       streamingIds.current.add(push.messageId);
       setLines((prev) => {
         const idx = prev.findIndex((l) => l.id === push.messageId);
@@ -312,6 +344,123 @@ export function App() {
     () => workers.find((w) => w.id === selectedWorkerId) ?? null,
     [workers, selectedWorkerId]
   );
+  const selectedTeam = useMemo(
+    () => teams.find((tm) => tm.id === selectedTeamId) ?? null,
+    [teams, selectedTeamId]
+  );
+
+  const openTeamChat = useCallback(
+    async (team: Team) => {
+      setSelectedTeamId(team.id);
+      setNav("teams");
+      const convId = team.conversationId;
+      if (!convId) {
+        setLines([
+          {
+            id: `team-empty-${team.id}`,
+            role: "system",
+            content: `Team "${team.name}" has no group chat yet.`,
+          },
+        ]);
+        return;
+      }
+      setConversationId(convId);
+      const msgs = (await window.calypso?.listMessages?.(convId).catch(() => [])) ?? [];
+      setLines([
+        {
+          id: `team-head-${team.id}`,
+          role: "system",
+          content: `Team chat · ${team.name} (${team.memberIds.length} members). Worker-to-worker messages show here.`,
+        },
+        ...msgs.map(messageToLine),
+      ]);
+    },
+    []
+  );
+
+  const createDemoTeam = useCallback(async () => {
+    const api = window.calypso;
+    if (!api?.createTeam) return;
+    let list = workers;
+    if (list.length < 2) {
+      list = (await api.listWorkers?.().catch(() => list)) ?? list;
+    }
+    if (list.length < 2) {
+      setLines((prev) => [
+        ...prev,
+        {
+          id: `need-workers-${Date.now()}`,
+          role: "system",
+          content: "Need at least two workers to form a team chat. Create another worker first.",
+        },
+      ]);
+      return;
+    }
+    const a = list[0]!;
+    const b = list[1]!;
+    const team = await api.createTeam({
+      id: `team-${Date.now()}`,
+      name: "Ops",
+      description: "Demo team group chat",
+      memberIds: [a.id, b.id],
+      leadId: a.id,
+    });
+    // Keep worker.teamId in sync for sendWorkerMessage resolution
+    if (api.updateWorker) {
+      await api.updateWorker({ ...a, teamId: team.id, updatedAt: Date.now() });
+      await api.updateWorker({ ...b, teamId: team.id, updatedAt: Date.now() });
+      const refreshed = await api.listWorkers();
+      setWorkers(refreshed);
+    }
+    refreshTeams();
+    await openTeamChat(team);
+    // Seed a real worker-to-worker message
+    if (api.sendWorkerChat) {
+      await api.sendWorkerChat(a.id, [b.id], "Standing by in the team chat.", {
+        teamId: team.id,
+        conversationId: team.conversationId,
+      });
+    }
+  }, [workers, refreshTeams, openTeamChat]);
+
+  const createDemoRoutine = useCallback(async () => {
+    const api = window.calypso;
+    if (!api?.createRoutine) return;
+    const worker = selected ?? workers[0];
+    if (!worker) {
+      setLines((prev) => [
+        ...prev,
+        { id: `need-w-${Date.now()}`, role: "system", content: "Create a worker before adding a routine." },
+      ]);
+      return;
+    }
+    const routine = await api.createRoutine({
+      id: `routine-${Date.now()}`,
+      name: "Quick check-in",
+      description: "Interval demo routine",
+      schedule: { type: "interval", ms: 60_000 },
+      workerId: worker.id,
+      teamId: selectedTeamId ?? undefined,
+      taskTemplate: {
+        title: "Routine check-in",
+        description: "Say ready in one short sentence.",
+        taskClass: "simple",
+      },
+      enabled: true,
+    });
+    refreshRoutines();
+    setNav("routines");
+    setLines((prev) => [
+      ...prev,
+      {
+        id: `routine-created-${routine.id}`,
+        role: "system",
+        content: `Routine "${routine.name}" scheduled · next ${
+          routine.nextRunAt ? new Date(routine.nextRunAt).toLocaleTimeString() : "soon"
+        }.`,
+      },
+    ]);
+  }, [selected, workers, selectedTeamId, refreshRoutines]);
 
   const finishSetup = useCallback(
     async (opts: FirstRunConsentOptions) => {
@@ -548,9 +697,15 @@ export function App() {
             <div style={{ fontSize: 12.5, color: colors.textMuted }}>
               {nav === "live"
                 ? (controlSession?.objective ?? "Waiting for an active control session")
-                : selected
-                  ? `Talking with ${selected.name}`
-                  : "Home"}
+                : nav === "teams"
+                  ? selectedTeam
+                    ? `Team chat · ${selectedTeam.name}`
+                    : "Pick or create a team"
+                  : nav === "routines"
+                    ? `${routines.length} routine${routines.length === 1 ? "" : "s"}`
+                    : selected
+                      ? `Talking with ${selected.name}`
+                      : "Home"}
               {modelStatus && !modelStatus.ready
                 ? ` · ${modelStatus.message ?? "Model unavailable"}`
                 : ""}
@@ -569,6 +724,70 @@ export function App() {
                 void window.calypso?.controlCommand?.(command);
               }}
             />
+          </div>
+        ) : null}
+
+        {nav === "teams" || nav === "routines" ? (
+          <div
+            style={{
+              padding: "12px 24px",
+              borderBottom: `1px solid ${colors.border}`,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+              background: colors.deep,
+            }}
+          >
+            {nav === "teams" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void createDemoTeam()}
+                  style={chipBtnStyle}
+                >
+                  New team chat
+                </button>
+                {teams.map((tm) => (
+                  <button
+                    key={tm.id}
+                    type="button"
+                    onClick={() => void openTeamChat(tm)}
+                    style={{
+                      ...chipBtnStyle,
+                      borderColor: tm.id === selectedTeamId ? colors.accent : colors.border,
+                      color: tm.id === selectedTeamId ? colors.accent : colors.textPrimary,
+                    }}
+                  >
+                    {tm.name} · {tm.memberIds.length}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => void createDemoRoutine()} style={chipBtnStyle}>
+                  New interval routine
+                </button>
+                {routines.map((r) => (
+                  <span
+                    key={r.id}
+                    style={{
+                      ...chipBtnStyle,
+                      cursor: "default",
+                      opacity: r.enabled ? 1 : 0.6,
+                    }}
+                    title={r.description}
+                  >
+                    {r.name}
+                    {r.nextRunAt ? ` · next ${new Date(r.nextRunAt).toLocaleTimeString()}` : ""}
+                    {r.lastRunAt ? ` · last ${new Date(r.lastRunAt).toLocaleTimeString()}` : ""}
+                  </span>
+                ))}
+                {routines.length === 0 ? (
+                  <span style={{ color: colors.textMuted, fontSize: 12.5 }}>No routines yet</span>
+                ) : null}
+              </>
+            )}
           </div>
         ) : null}
 
@@ -626,9 +845,11 @@ export function App() {
           placeholder={
             modelWarming
               ? "Warming up local model…"
-              : selected
-                ? `Message ${selected.name}…`
-                : "Message Calypso…"
+              : nav === "teams" && selectedTeam
+                ? `Message team ${selectedTeam.name}…`
+                : selected
+                  ? `Message ${selected.name}…`
+                  : "Message Calypso…"
           }
         />
       </AppShell>
@@ -674,6 +895,16 @@ export function App() {
     </>
   );
 }
+
+const chipBtnStyle: CSSProperties = {
+  fontSize: 12.5,
+  padding: "6px 12px",
+  borderRadius: 999,
+  border: `1px solid ${colors.border}`,
+  background: colors.raised,
+  color: colors.textPrimary,
+  cursor: "pointer",
+};
 
 function navLabel(id: SidebarNavId): string {
   switch (id) {

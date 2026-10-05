@@ -270,6 +270,21 @@ function registerIpc(): void {
         return callCore(method, { taskId: args[0] });
       case "retryTask":
         return callCore(method, { taskId: args[0] });
+      case "createRoutine":
+        return callCore(method, { routine: args[0] });
+      case "updateRoutine":
+        return callCore(method, { routine: args[0] });
+      case "deleteRoutine":
+        return callCore(method, { routineId: args[0] });
+      case "sendWorkerChat":
+        return callCore(method, {
+          fromWorkerId: args[0],
+          toWorkerIds: args[1],
+          content: args[2],
+          teamId: (args[3] as { teamId?: string; conversationId?: string } | undefined)?.teamId,
+          conversationId: (args[3] as { teamId?: string; conversationId?: string } | undefined)
+            ?.conversationId,
+        });
       default:
         return callCore(method);
     }
@@ -309,6 +324,11 @@ function registerIpc(): void {
     "cancelTask",
     "retryTask",
     "openBrowserSession",
+    "listRoutines",
+    "createRoutine",
+    "updateRoutine",
+    "deleteRoutine",
+    "sendWorkerChat",
     "shutdown",
   ];
   for (const m of methods) {

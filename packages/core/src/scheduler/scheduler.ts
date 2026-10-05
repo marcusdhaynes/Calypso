@@ -1,5 +1,30 @@
-import type { Routine, RoutineId } from "@calypso/shared";
+import type { Routine, RoutineId, RoutineSchedule } from "@calypso/shared";
 import type { CalypsoDatabase } from "../db/database.js";
+
+/** Compute the next fire time for a schedule, or undefined when done (once, past). */
+export function computeNextRunAt(schedule: RoutineSchedule, from = Date.now()): number | undefined {
+  if (schedule.type === "once") {
+    return schedule.at > from ? schedule.at : undefined;
+  }
+  if (schedule.type === "interval") {
+    return from + schedule.ms;
+  }
+  // Minimal cron: support "m h * * *" only (minute hour). Falls back to +1h.
+  const parts = schedule.expression.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    const minute = Number(parts[0]);
+    const hour = Number(parts[1]);
+    if (!Number.isNaN(minute) && !Number.isNaN(hour) && parts[0] !== "*" && parts[1] !== "*") {
+      const d = new Date(from);
+      d.setSeconds(0, 0);
+      d.setMinutes(minute);
+      d.setHours(hour);
+      if (d.getTime() <= from) d.setDate(d.getDate() + 1);
+      return d.getTime();
+    }
+  }
+  return from + 60 * 60 * 1000;
+}
 
 /** Routine scheduler with optional SQLite persistence. */
 export class RoutineScheduler {
@@ -18,7 +43,20 @@ export class RoutineScheduler {
   }
 
   upsert(routine: Routine): Routine {
-    const full: Routine = { ...routine, updatedAt: routine.updatedAt || Date.now() };
+    const now = Date.now();
+    let nextRunAt = routine.nextRunAt;
+    if (nextRunAt === undefined && routine.enabled) {
+      if (routine.schedule.type === "once") {
+        nextRunAt = routine.schedule.at;
+      } else {
+        nextRunAt = computeNextRunAt(routine.schedule, now);
+      }
+    }
+    const full: Routine = {
+      ...routine,
+      nextRunAt,
+      updatedAt: routine.updatedAt || now,
+    };
     this.routines.set(full.id, full);
     this.database?.upsertRoutine(full);
     return full;
@@ -63,37 +101,19 @@ export class RoutineScheduler {
   tick(now = Date.now()): Routine[] {
     const fired: Routine[] = [];
     for (const routine of this.due(now)) {
-      const next = this.computeNextRun(routine, now);
+      const next =
+        routine.schedule.type === "once" ? undefined : computeNextRunAt(routine.schedule, now);
       const updated = this.upsert({
         ...routine,
         lastRunAt: now,
         nextRunAt: next,
+        // once routines disable after fire
+        enabled: routine.schedule.type === "once" ? false : routine.enabled,
         updatedAt: now,
       });
       fired.push(updated);
       this.onFire?.(updated);
     }
     return fired;
-  }
-
-  private computeNextRun(routine: Routine, from: number): number | undefined {
-    const s = routine.schedule;
-    if (s.type === "once") return undefined;
-    if (s.type === "interval") return from + s.ms;
-    // Minimal cron: support "m h * * *" only (minute hour). Falls back to +1h.
-    const parts = s.expression.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      const minute = Number(parts[0]);
-      const hour = Number(parts[1]);
-      if (!Number.isNaN(minute) && !Number.isNaN(hour) && parts[0] !== "*" && parts[1] !== "*") {
-        const d = new Date(from);
-        d.setSeconds(0, 0);
-        d.setMinutes(minute);
-        d.setHours(hour);
-        if (d.getTime() <= from) d.setDate(d.getDate() + 1);
-        return d.getTime();
-      }
-    }
-    return from + 60 * 60 * 1000;
   }
 }

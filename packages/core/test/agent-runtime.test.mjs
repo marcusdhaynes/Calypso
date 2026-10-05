@@ -564,3 +564,75 @@ test("routines fire into the dispatcher", async () => {
   orch.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("createTeam ensures group conversation + worker chat persists without explicit conversationId", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calypso-rt-"));
+  const dbPath = path.join(dir, "t.sqlite");
+  const orch = new Orchestrator({
+    databasePath: dbPath,
+    disableEmbeddings: true,
+    modelRouter: createFakeRouter(createFakeProvider([{ content: "hi" }])),
+    autoStartDispatcher: false,
+  });
+
+  const a = orch.createWorker(baseWorker({ id: "a", name: "Alice", tools: ["team.message"] }));
+  const b = orch.createWorker(baseWorker({ id: "b", name: "Bob", tools: [] }));
+  const team = orch.createTeam({
+    id: "team1",
+    name: "Ops",
+    description: "demo",
+    memberIds: [a.id, b.id],
+    leadId: a.id,
+  });
+  assert.ok(team.conversationId, "team should have conversationId");
+  orch.workers.upsert({ ...a, teamId: team.id, updatedAt: Date.now() });
+  orch.workers.upsert({ ...b, teamId: team.id, updatedAt: Date.now() });
+
+  const msg = orch.sendWorkerMessage(a.id, [b.id], "Need your help");
+  assert.ok(msg, "message should persist via team conversation");
+  assert.equal(msg.conversationId, team.conversationId);
+  const persisted = orch.database.listMessages(team.conversationId);
+  assert.ok(persisted.some((m) => m.author.type === "worker" && m.author.workerId === "a"));
+
+  orch.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("createRoutine fills nextRunAt and fires on tick", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calypso-rt-"));
+  const dbPath = path.join(dir, "t.sqlite");
+  const provider = createFakeProvider([{ content: "routine done" }]);
+  const orch = new Orchestrator({
+    databasePath: dbPath,
+    disableEmbeddings: true,
+    modelRouter: createFakeRouter(provider),
+    autoStartDispatcher: false,
+  });
+  orch.dispatcher.start();
+
+  const worker = orch.createWorker(baseWorker({ tools: [] }));
+  const routine = orch.createRoutine({
+    id: "r-auto",
+    name: "auto",
+    description: "interval",
+    schedule: { type: "interval", ms: 1000 },
+    workerId: worker.id,
+    taskTemplate: { title: "Auto routine", description: "tick", taskClass: "simple" },
+    enabled: true,
+    // force due immediately
+    nextRunAt: Date.now() - 10,
+  });
+  assert.ok(routine.nextRunAt !== undefined);
+
+  const fired = orch.scheduler.tick(Date.now());
+  assert.equal(fired.length, 1);
+  assert.ok(fired[0].nextRunAt > Date.now() - 1000);
+
+  await waitFor(() => {
+    const tasks = Object.values(orch.tasks.snapshot().tasks);
+    return tasks.some((t) => t.title === "Auto routine" && t.status === "completed");
+  });
+
+  orch.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

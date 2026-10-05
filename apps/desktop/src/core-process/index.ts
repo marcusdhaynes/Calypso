@@ -41,6 +41,7 @@ import type {
   TeamInput,
   WorkerId,
   WorkerInput,
+  RoutineInput,
 } from "@calypso/shared";
 import path from "node:path";
 import fs from "node:fs";
@@ -400,20 +401,16 @@ async function handle(req: CoreRequest): Promise<void> {
         respond({ id: req.id, ok: true, result: orchestrator.teams.list() });
         return;
       case "createTeam": {
-        const now = Date.now();
-        const input = req.params.team as TeamInput;
-        const team: Team = {
-          ...input,
-          createdAt: input.createdAt ?? now,
-          updatedAt: now,
-        };
-        const saved = orchestrator.teams.upsert(team);
+        const saved = orchestrator.createTeam(req.params.team as TeamInput);
         respond({ id: req.id, ok: true, result: saved });
         return;
       }
       case "updateTeam": {
         const saved = orchestrator.teams.upsert(req.params.team);
-        respond({ id: req.id, ok: true, result: saved });
+        orchestrator.ensureTeamConversation(saved);
+        const linked = orchestrator.teams.get(saved.id) ?? saved;
+        orchestrator.bus.publish({ type: "team.updated", team: linked });
+        respond({ id: req.id, ok: true, result: linked });
         return;
       }
       case "listProjects":
@@ -465,6 +462,33 @@ async function handle(req: CoreRequest): Promise<void> {
       case "getTaskGraph":
         respond({ id: req.id, ok: true, result: orchestrator.tasks.snapshot() });
         return;
+      case "listRoutines":
+        respond({ id: req.id, ok: true, result: orchestrator.scheduler.list() });
+        return;
+      case "createRoutine": {
+        const routine = orchestrator.createRoutine(req.params.routine);
+        respond({ id: req.id, ok: true, result: routine });
+        return;
+      }
+      case "updateRoutine": {
+        const routine = orchestrator.updateRoutine(req.params.routine);
+        respond({ id: req.id, ok: true, result: routine });
+        return;
+      }
+      case "deleteRoutine": {
+        const ok = orchestrator.deleteRoutine(req.params.routineId);
+        respond({ id: req.id, ok: true, result: ok });
+        return;
+      }
+      case "sendWorkerChat": {
+        const { fromWorkerId, toWorkerIds, content, teamId, conversationId } = req.params;
+        const msg = orchestrator.sendWorkerMessage(fromWorkerId, toWorkerIds, content, {
+          teamId,
+          conversationId,
+        });
+        respond({ id: req.id, ok: true, result: msg });
+        return;
+      }
       case "sendMessage": {
         const { conversationId, content, workerId } = req.params;
         const conversation = ensureConversation(conversationId, workerId);

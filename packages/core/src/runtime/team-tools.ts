@@ -33,9 +33,12 @@ export function createTeamTools(orch: Orchestrator): Tool[] {
         (params.conversationId as string | undefined) ??
         (ctx.taskId ? orch.tasks.get(ctx.taskId)?.conversationId : undefined);
 
+      const worker = orch.workers.get(ctx.workerId);
+      const teamId = worker?.teamId ?? (ctx.taskId ? orch.tasks.get(ctx.taskId)?.teamId : undefined);
       orch.sendWorkerMessage(ctx.workerId, toWorkerIds, content, {
         taskId: ctx.taskId,
         conversationId,
+        teamId,
       });
 
       return {

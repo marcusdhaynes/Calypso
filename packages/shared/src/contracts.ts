@@ -204,6 +204,8 @@ export interface Team {
   memberIds: WorkerId[];
   leadId?: WorkerId;
   projectId?: ProjectId;
+  /** Shared group-chat conversation for this team (worker-to-worker + user). */
+  conversationId?: ConversationId;
   createdAt: number;
   updatedAt: number;
 }
@@ -775,6 +777,13 @@ export interface Routine {
   updatedAt: number;
 }
 
+export type RoutineInput = Omit<Routine, "createdAt" | "updatedAt" | "lastRunAt" | "nextRunAt"> & {
+  createdAt?: number;
+  updatedAt?: number;
+  lastRunAt?: number;
+  nextRunAt?: number;
+};
+
 // ---------------------------------------------------------------------------
 // Browser runtime (Spin) — Chromium download into userData
 // ---------------------------------------------------------------------------
@@ -870,6 +879,8 @@ export type CalypsoEvent =
   | { type: "tool.result"; result: ToolResult }
   | { type: "plan.updated"; plan: Plan }
   | { type: "routine.fired"; routineId: RoutineId; taskId: TaskId; at: number }
+  | { type: "routine.updated"; routine: Routine }
+  | { type: "team.updated"; team: Team }
   | {
       type: "bus.chat";
       fromWorkerId: WorkerId;
@@ -1070,6 +1081,21 @@ export type CoreRequest =
       method: "openBrowserSession";
       params: { workerId: WorkerId; projectId?: ProjectId };
     }
+  | { id: string; method: "listRoutines"; params?: undefined }
+  | { id: string; method: "createRoutine"; params: { routine: RoutineInput } }
+  | { id: string; method: "updateRoutine"; params: { routine: Routine } }
+  | { id: string; method: "deleteRoutine"; params: { routineId: RoutineId } }
+  | {
+      id: string;
+      method: "sendWorkerChat";
+      params: {
+        fromWorkerId: WorkerId;
+        toWorkerIds: WorkerId[];
+        content: string;
+        teamId?: TeamId;
+        conversationId?: ConversationId;
+      };
+    }
   | { id: string; method: "shutdown"; params?: undefined };
 
 export type CoreResponse =
@@ -1125,6 +1151,16 @@ export interface CalypsoIpcApi {
     workerId: WorkerId,
     projectId?: ProjectId
   ): Promise<{ sessionId: BrowserSessionId; workerId: WorkerId }>;
+  listRoutines(): Promise<Routine[]>;
+  createRoutine(routine: RoutineInput): Promise<Routine>;
+  updateRoutine(routine: Routine): Promise<Routine>;
+  deleteRoutine(routineId: RoutineId): Promise<boolean>;
+  sendWorkerChat(
+    fromWorkerId: WorkerId,
+    toWorkerIds: WorkerId[],
+    content: string,
+    opts?: { teamId?: TeamId; conversationId?: ConversationId }
+  ): Promise<Message | undefined>;
   shutdown(): Promise<void>;
   getFirstRunPlan(): Promise<FirstRunPlan>;
   ensureBrowserRuntime(): Promise<BrowserRuntimeStatus>;

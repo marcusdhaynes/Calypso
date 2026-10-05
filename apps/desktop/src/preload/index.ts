@@ -15,6 +15,11 @@ import type {
   Worker,
   WorkerId,
   WorkerInput,
+  Routine,
+  RoutineId,
+  RoutineInput,
+  TeamId,
+  Message,
 } from "@calypso/shared";
 
 const api: CalypsoIpcApi = {
@@ -66,6 +71,16 @@ const api: CalypsoIpcApi = {
   resumeWorkers: () => ipcRenderer.invoke("calypso:resumeWorkers"),
   cancelTask: (taskId: TaskId) => ipcRenderer.invoke("calypso:cancelTask", taskId),
   retryTask: (taskId: TaskId) => ipcRenderer.invoke("calypso:retryTask", taskId),
+  listRoutines: () => ipcRenderer.invoke("calypso:listRoutines"),
+  createRoutine: (routine: RoutineInput) => ipcRenderer.invoke("calypso:createRoutine", routine),
+  updateRoutine: (routine: Routine) => ipcRenderer.invoke("calypso:updateRoutine", routine),
+  deleteRoutine: (routineId: RoutineId) => ipcRenderer.invoke("calypso:deleteRoutine", routineId),
+  sendWorkerChat: (
+    fromWorkerId: WorkerId,
+    toWorkerIds: WorkerId[],
+    content: string,
+    opts?: { teamId?: TeamId; conversationId?: ConversationId }
+  ) => ipcRenderer.invoke("calypso:sendWorkerChat", fromWorkerId, toWorkerIds, content, opts),
   openBrowserSession: (workerId, projectId) =>
     ipcRenderer.invoke("calypso:openBrowserSession", workerId, projectId),
   shutdown: () => ipcRenderer.invoke("calypso:shutdown"),
