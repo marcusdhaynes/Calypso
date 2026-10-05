@@ -939,7 +939,13 @@ export type CoreRequest =
   | { id: string; method: "unwatchFrames"; params?: undefined }
   | { id: string; method: "stopAll"; params?: undefined }
   | { id: string; method: "pauseWorkers"; params?: undefined }
-  | { id: string; method: "resumeWorkers"; params?: undefined };
+  | { id: string; method: "resumeWorkers"; params?: undefined }
+  | {
+      id: string;
+      method: "openBrowserSession";
+      params: { workerId: WorkerId; projectId?: ProjectId };
+    }
+  | { id: string; method: "shutdown"; params?: undefined };
 
 export type CoreResponse =
   | { id: string; ok: true; result: unknown }
@@ -988,6 +994,11 @@ export interface CalypsoIpcApi {
   stopAll(): Promise<void>;
   pauseWorkers(): Promise<void>;
   resumeWorkers(): Promise<void>;
+  openBrowserSession(
+    workerId: WorkerId,
+    projectId?: ProjectId
+  ): Promise<{ sessionId: BrowserSessionId; workerId: WorkerId }>;
+  shutdown(): Promise<void>;
   getFirstRunPlan(): Promise<FirstRunPlan>;
   getModelStatus(): Promise<ModelStatus>;
   getAppInfo(): Promise<AppInfo>;

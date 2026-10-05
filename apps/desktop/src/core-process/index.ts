@@ -171,10 +171,24 @@ orchestrator.bus.subscribe((event: CalypsoEvent) => {
 
 // ---- Tools ----
 const browserControl: BrowserControl = createBrowserControl({
-  dataRoot: path.join(path.dirname(databasePath), "browser-profiles"),
+  dataRoot: path.join(path.dirname(databasePath), "browser"),
 });
 for (const tool of browserControl.tools) {
   orchestrator.registerTool(tool);
+}
+
+/** Per-worker Playwright sessions (Spin): open before browse; tools take sessionId. */
+const browserSessions = new Map<string, string>();
+
+async function ensureBrowserSession(workerId: string, projectId?: string): Promise<string> {
+  const existing = browserSessions.get(workerId);
+  if (existing) return existing;
+  const session = await browserControl.manager.openSession({
+    workerId,
+    projectId,
+  });
+  browserSessions.set(workerId, session.id);
+  return session.id;
 }
 for (const tool of createSystemTools()) {
   orchestrator.registerTool(tool);
@@ -305,6 +319,12 @@ async function streamWorkerReply(
     return;
   }
 
+  try {
+    await ensureBrowserSession(worker.id, worker.projectId);
+  } catch {
+    /* browser may be unavailable — chat still works */
+  }
+
   orchestrator.workers.setStatus(worker.id, "thinking");
   orchestrator.bus.publish({
     type: "worker.status",
@@ -332,6 +352,9 @@ async function streamWorkerReply(
           `Role: ${worker.role}`,
           `Personality: ${worker.personality}`,
           worker.instructions,
+          browserSessions.get(worker.id)
+            ? `Browser sessionId for tools: ${browserSessions.get(worker.id)}`
+            : "",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -446,6 +469,7 @@ async function handle(req: CoreRequest): Promise<void> {
       case "createWorker": {
         const worker = orchestrator.createWorker(req.params.worker as WorkerInput);
         orchestrator.bus.publish({ type: "worker.updated", worker });
+        void ensureBrowserSession(worker.id, worker.projectId).catch(() => undefined);
         respond({ id: req.id, ok: true, result: worker });
         return;
       }
@@ -619,6 +643,29 @@ async function handle(req: CoreRequest): Promise<void> {
         }
         respond({ id: req.id, ok: true, result: null });
         return;
+      case "openBrowserSession": {
+        const { workerId, projectId } = req.params;
+        const sessionId = await ensureBrowserSession(workerId, projectId);
+        respond({ id: req.id, ok: true, result: { sessionId, workerId } });
+        return;
+      }
+      case "shutdown": {
+        unwatchFrames?.();
+        unwatchFrames = null;
+        try {
+          await browserControl.dispose();
+        } catch {
+          /* ignore */
+        }
+        try {
+          await windowsControl?.dispose();
+        } catch {
+          /* ignore */
+        }
+        orchestrator.close();
+        respond({ id: req.id, ok: true, result: null });
+        return;
+      }
       default:
         respond({
           id: (req as { id: string }).id,

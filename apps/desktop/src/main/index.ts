@@ -248,6 +248,8 @@ function registerIpc(): void {
         return callCore(method, { conversation: args[0] });
       case "listMessages":
         return callCore(method, { conversationId: args[0] });
+      case "openBrowserSession":
+        return callCore(method, { workerId: args[0], projectId: args[1] });
       default:
         return callCore(method);
     }
@@ -279,6 +281,8 @@ function registerIpc(): void {
     "stopAll",
     "pauseWorkers",
     "resumeWorkers",
+    "openBrowserSession",
+    "shutdown",
   ];
   for (const m of methods) {
     ipcMain.handle(`calypso:${m}`, bridge(m));
@@ -299,8 +303,15 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   quitting = true;
   globalShortcut.unregisterAll();
-  coreProc?.kill();
-  coreProc = null;
+  const proc = coreProc;
+  if (proc) {
+    void callCore("shutdown")
+      .catch(() => undefined)
+      .finally(() => {
+        proc.kill();
+        if (coreProc === proc) coreProc = null;
+      });
+  }
 });
 
 app.on("window-all-closed", () => {

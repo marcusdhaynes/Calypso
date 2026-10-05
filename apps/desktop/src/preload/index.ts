@@ -63,6 +63,9 @@ const api: CalypsoIpcApi = {
   stopAll: () => ipcRenderer.invoke("calypso:stopAll"),
   pauseWorkers: () => ipcRenderer.invoke("calypso:pauseWorkers"),
   resumeWorkers: () => ipcRenderer.invoke("calypso:resumeWorkers"),
+  openBrowserSession: (workerId, projectId) =>
+    ipcRenderer.invoke("calypso:openBrowserSession", workerId, projectId),
+  shutdown: () => ipcRenderer.invoke("calypso:shutdown"),
   getFirstRunPlan: () => ipcRenderer.invoke("calypso:getFirstRunPlan"),
   getModelStatus: () => ipcRenderer.invoke("calypso:getModelStatus"),
   getAppInfo: () => ipcRenderer.invoke("calypso:getAppInfo"),
