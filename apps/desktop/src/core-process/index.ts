@@ -492,7 +492,7 @@ async function handle(req: CoreRequest): Promise<void> {
         respond({
           id: req.id,
           ok: true,
-          result: browserControl.getRuntimeStatus(),
+          result: await browserControl.getRuntimeStatus(),
         });
         return;
       }

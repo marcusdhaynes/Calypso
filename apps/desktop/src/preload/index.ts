@@ -67,6 +67,8 @@ const api: CalypsoIpcApi = {
     ipcRenderer.invoke("calypso:openBrowserSession", workerId, projectId),
   shutdown: () => ipcRenderer.invoke("calypso:shutdown"),
   getFirstRunPlan: () => ipcRenderer.invoke("calypso:getFirstRunPlan"),
+  ensureBrowserRuntime: () => ipcRenderer.invoke("calypso:ensureBrowserRuntime"),
+  getBrowserRuntimeStatus: () => ipcRenderer.invoke("calypso:getBrowserRuntimeStatus"),
   getModelStatus: () => ipcRenderer.invoke("calypso:getModelStatus"),
   getAppInfo: () => ipcRenderer.invoke("calypso:getAppInfo"),
   onTray(handler: (payload: { action: string }) => void) {

@@ -1,4 +1,5 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
+import { applyBrowsersPath, ensureChromium, defaultBrowsersPath, loadPlaywright } from "./runtime.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -13,9 +14,13 @@ import type {
 export interface SessionManagerOptions {
   /** Root for persistent Playwright user-data dirs (cookies, storage, downloads). */
   dataRoot: string;
+  /** PLAYWRIGHT_BROWSERS_PATH (Chromium cache). Defaults beside dataRoot. */
+  browsersPath?: string;
   headless?: boolean;
   /** Default origin allow-list for new sessions (empty = unrestricted until first nav sets origin). */
   defaultAllowedOrigins?: string[];
+  /** Optional progress sink for first-run Chromium download. */
+  onRuntimeProgress?: (progress: import("./runtime.js").BrowserRuntimeProgress) => void;
 }
 
 interface LiveSession {
@@ -31,16 +36,33 @@ interface LiveSession {
 export class BrowserSessionManager {
   private browser: Browser | null = null;
   private sessions = new Map<BrowserSessionId, LiveSession>();
-  private readonly opts: Required<Pick<SessionManagerOptions, "dataRoot" | "headless">> &
+  private readonly opts: Required<Pick<SessionManagerOptions, "dataRoot" | "headless" | "browsersPath">> &
     SessionManagerOptions;
+  private runtimeReady = false;
 
   constructor(opts: SessionManagerOptions) {
-    this.opts = { headless: true, ...opts };
+    const browsersPath = opts.browsersPath ?? defaultBrowsersPath(opts.dataRoot);
+    this.opts = { headless: true, browsersPath, ...opts };
     mkdirSync(this.opts.dataRoot, { recursive: true });
+    mkdirSync(this.opts.browsersPath, { recursive: true });
+    applyBrowsersPath(this.opts.browsersPath);
+  }
+
+  /** Download Chromium into userData if missing (first-run / first browse). */
+  async ensureRuntime(): Promise<void> {
+    if (this.runtimeReady) return;
+    await ensureChromium({
+      browsersPath: this.opts.browsersPath,
+      onProgress: this.opts.onRuntimeProgress,
+    });
+    applyBrowsersPath(this.opts.browsersPath);
+    this.runtimeReady = true;
   }
 
   async ensureBrowser(): Promise<Browser> {
+    await this.ensureRuntime();
     if (this.browser?.isConnected()) return this.browser;
+    const { chromium } = await loadPlaywright(this.opts.browsersPath);
     this.browser = await chromium.launch({
       headless: this.opts.headless,
       args: ["--disable-dev-shm-usage"],
