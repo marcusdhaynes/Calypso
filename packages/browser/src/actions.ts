@@ -207,11 +207,12 @@ async function executeOnce(
     }
     case "extract": {
       if (action.locator) {
-        const loc = resolveLocator(page, action.locator);
-        const text = await loc.first().innerText();
+        const loc = resolveLocator(page, action.locator).first();
+        await loc.waitFor({ state: "visible", timeout: 10_000 });
+        const text = await loc.innerText({ timeout: 10_000 });
         output = { text };
       } else {
-        const text = await page.innerText("body");
+        const text = await page.innerText("body", { timeout: 10_000 });
         const title = await page.title();
         output = { title, text: text.slice(0, 50_000), url: page.url() };
       }
