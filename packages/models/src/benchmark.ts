@@ -130,8 +130,10 @@ export function thinkingEnabledForTaskClass(taskClass: TaskClass): boolean {
 }
 
 /**
- * Attach Ollama `think` (and preserve other fields) based on TaskClass.
- * Providers that ignore unknown fields stay compatible.
+ * Attach `think` based on TaskClass (reasoning → true; else false).
+ * Callers should prefer this helper. OpenAICompatibleProvider (id "ollama")
+ * maps think!==true → reasoning_effort:"none" and strips `think`, because
+ * Ollama's /v1 endpoint ignores the `think` field and qwen3 thinks by default.
  */
 export function buildCompletionRequest(
   base: ChatCompletionRequest,

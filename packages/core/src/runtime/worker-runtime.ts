@@ -11,6 +11,7 @@ import type {
   WorkerStatus,
 } from "@calypso/shared";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
+import { buildCompletionRequest } from "@calypso/models";
 import { buildWorkerContext } from "./context.js";
 import { newId } from "./ids.js";
 
@@ -102,15 +103,16 @@ export class WorkerRuntime {
 
         publishStatus(this.orch, worker.id, iter === 0 ? "thinking" : "working");
 
-        const request: ChatCompletionRequest = {
-          model,
-          messages,
-          temperature: 0.4,
-          stream: true,
-          tools: ctx.toolSchemas.length ? ctx.toolSchemas : undefined,
-          // Hidden reasoning tokens cost seconds per reply on local qwen3; only reasoning tasks think.
-          think: task.taskClass === "reasoning",
-        };
+        const request = buildCompletionRequest(
+          {
+            model,
+            messages,
+            temperature: 0.4,
+            stream: true,
+            tools: ctx.toolSchemas.length ? ctx.toolSchemas : undefined,
+          },
+          task.taskClass
+        );
 
         let assistantText = "";
         const pendingToolCalls = new Map<number, ChatToolCall>();

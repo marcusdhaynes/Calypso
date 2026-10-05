@@ -8,6 +8,7 @@ import type {
   Worker,
   WorkerId,
 } from "@calypso/shared";
+import { buildCompletionRequest } from "@calypso/models";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { newId } from "./ids.js";
 
@@ -159,15 +160,18 @@ export class Planner {
       "reasoning",
       leader.preferredModel
     );
-    const request: ChatCompletionRequest = {
-      model,
-      messages: [
-        { role: "system", content: "Output valid JSON only. No markdown fences." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.2,
-      stream: false,
-    };
+    const request = buildCompletionRequest(
+      {
+        model,
+        messages: [
+          { role: "system", content: "Output valid JSON only. No markdown fences." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+        stream: false,
+      },
+      "reasoning"
+    );
 
     let raw = "";
     try {
