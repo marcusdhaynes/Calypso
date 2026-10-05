@@ -259,41 +259,17 @@ export function App() {
     });
   }, []);
 
-  /** Dedicated Live route: start frame watch so LiveComputerView can bind. */
+  /** Live nav: ensure frames are watched; Theriz LiveComputerView mounts on control.session.updated. */
   useEffect(() => {
     const api = window.calypso;
     if (!api || nav !== "live") return;
-    watchingFrames.current = true;
-    void api
-      .watchFrames?.()
-      .then((result) => {
-        const sessions = (result as { sessions?: ControlSession[] } | undefined)?.sessions;
-        if (sessions?.length) {
-          const active = sessions.find((s) => s.status !== "stopped") ?? sessions[0];
-          if (active) setControlSession(active);
-          return;
-        }
-        setControlSession((prev) => {
-          if (prev && prev.status !== "stopped") return prev;
-          return {
-            id: "live-preview",
-            kind: "computer",
-            workerId: selectedWorkerId ?? workers[0]?.id ?? "none",
-            objective: "Live computer view — waiting for a control session",
-            currentAction: "No active session yet (Windows control streams frames when available)",
-            progressPercent: 0,
-            status: "stopped",
-            startedAt: Date.now(),
-            updatedAt: Date.now(),
-          };
-        });
-      })
-      .catch(() => undefined);
-    return () => {
-      watchingFrames.current = false;
-      void api.unwatchFrames?.().catch(() => undefined);
-    };
-  }, [nav, selectedWorkerId, workers]);
+    if (!watchingFrames.current) {
+      watchingFrames.current = true;
+      void api.watchFrames?.().catch(() => {
+        watchingFrames.current = false;
+      });
+    }
+  }, [nav]);
 
   const selected = useMemo(
     () => workers.find((w) => w.id === selectedWorkerId) ?? null,
@@ -497,11 +473,11 @@ export function App() {
             </div>
             <div style={{ fontSize: 12.5, color: colors.textMuted }}>
               {nav === "live"
-                ? (controlSession?.objective ?? "Computer / browser mirror")
+                ? (controlSession?.objective ?? "Waiting for an active control session")
                 : selected
                   ? `Talking with ${selected.name}`
                   : "Home"}
-              {modelStatus && !modelStatus.ready && nav !== "live"
+              {modelStatus && !modelStatus.ready
                 ? ` · ${modelStatus.message ?? "Model unavailable"}`
                 : ""}
             </div>
@@ -509,11 +485,11 @@ export function App() {
         </header>
 
 
-        {(nav === "live" || (controlSession && controlSession.status !== "stopped")) && controlSession ? (
+        {controlSession && controlSession.status !== "stopped" ? (
           <div style={{ padding: "16px 24px 0", maxWidth: 960, width: "100%", margin: "0 auto" }}>
             <LiveComputerView
               session={controlSession}
-              worker={workers.find((w) => w.id === controlSession.workerId) ?? selected ?? undefined}
+              worker={workers.find((w) => w.id === controlSession.workerId)}
               frame={controlFrame}
               onCommand={(command) => {
                 void window.calypso?.controlCommand?.(command);

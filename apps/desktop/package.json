@@ -18,19 +18,21 @@
     "clean": "rm -rf dist out release",
     "build:core": "tsc -p tsconfig.core.json",
     "test:integration": "node test/integration-smoke.mjs",
-    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
-    "pack:win:dir": "electron-builder --win --x64 --dir"
+    "rebuild:native": "electron-builder install-app-deps",
+    "pack:win:dir": "electron-builder --win --x64 --dir",
+    "postinstall": "electron-builder install-app-deps || true"
   },
   "dependencies": {
+    "@calypso/browser": "*",
     "@calypso/core": "*",
     "@calypso/models": "*",
     "@calypso/shared": "*",
+    "@calypso/tools-system": "*",
     "@calypso/ui": "*",
+    "@calypso/windows-control": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@calypso/browser": "*",
-    "@calypso/tools-system": "*",
-    "@calypso/windows-control": "*"
+    "better-sqlite3": "^11.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
@@ -38,12 +40,11 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "concurrently": "^9.1.0",
-    "electron": "^33.2.0",
+    "electron": "33.4.11",
     "electron-builder": "^25.1.8",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
-    "wait-on": "^8.0.1",
-    "@electron/rebuild": "^3.7.1"
+    "wait-on": "^8.0.1"
   },
   "build": {
     "appId": "com.calypso.app",
@@ -53,7 +54,13 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map",
+      "!**/node_modules/playwright/.local-browsers/**",
+      "!**/node_modules/playwright-core/.local-browsers/**",
+      "!**/ms-playwright/**",
+      "!**/*chromium*/**",
+      "!**/ollama*/**"
     ],
     "win": {
       "target": [
@@ -70,7 +77,8 @@
           ]
         }
       ],
-      "executableName": "Calypso"
+      "executableName": "Calypso",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
@@ -80,16 +88,23 @@
     "portable": {
       "artifactName": "Calypso-Portable-${version}.${ext}"
     },
-    "asarUnpack": [
-      "**/*.node",
-      "**/better-sqlite3/**/*",
-      "**/calypso-host.ps1"
-    ],
     "npmRebuild": true,
     "buildDependenciesFromSource": false,
     "nodeGypRebuild": false,
     "extraMetadata": {
       "main": "dist/main/index.js"
-    }
-  }
+    },
+    "electronVersion": "33.4.11",
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "../../packages/windows-control/host",
+        "to": "windows-control-host",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  },
+  "author": "Calypso"
 }
