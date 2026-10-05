@@ -1,0 +1,19 @@
+{
+  "name": "calypso",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Calypso — Windows desktop agent orchestration platform",
+  "scripts": {
+    "build": "npm run build -w @calypso/shared && npm run build -w @calypso/models && npm run build -w @calypso/tools-system && npm run build -w @calypso/windows-control && npm run build -w @calypso/browser && npm run build -w @calypso/core && npm run build -w @calypso/ui && npm run build -w @calypso/desktop",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "dev": "npm run dev -w @calypso/desktop",
+    "clean": "npm run clean -ws --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

@@ -1,0 +1,84 @@
+# Calypso
+
+Windows desktop agent orchestration platform. Electron + React + TypeScript (Vite) shell, TypeScript core with a persistent task graph, local/cloud model routing, and tool packages for Windows control, browser, and system ops.
+
+Packaged later with **electron-builder** into `Calypso.exe` (NSIS installer + portable). Target: Windows x64, `productName` / `executableName`: **Calypso**.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Electron main (thin shell)                                 │
+│    windows, lifecycle, bridges MessagePort ↔ IPC            │
+├─────────────────────────────────────────────────────────────┤
+│  Renderer (React + @calypso/ui)                             │
+│    talks to core over typed CoreRequest/Response/Push       │
+├─────────────────────────────────────────────────────────────┤
+│  utilityProcess: @calypso/core                              │
+│    orchestrator, task graph, workers, teams, bus, memory,   │
+│    scheduler, PermissionGate                                │
+│    (same protocol can later ride localhost WebSocket)       │
+├──────────────┬──────────────────┬───────────────────────────┤
+│ @calypso/    │ @calypso/        │ @calypso/models           │
+│ windows-     │ browser          │ ModelProvider + Router    │
+│ control      │ (Playwright)     │                           │
+└──────────────┴──────────────────┴───────────────────────────┘
+         ▲ all cross-talk via @calypso/shared contracts only
+```
+
+### Process model
+
+- **`packages/core` runs in an Electron `utilityProcess`**, separate from the main process.
+- The renderer never imports core directly; it uses the typed message channel (`CoreRequest` / `CoreResponse` / `CorePush` in `@calypso/shared`), bridged by main via IPC today.
+- That channel is designed so it can also be served over **localhost WebSocket** later — keeping the UI shell swappable and the UI responsive while core does heavy work.
+
+### Persistence
+
+SQLite via **better-sqlite3** (wired by Anky): workers, teams, conversations, messages, tasks, memory, projects, artifacts.
+
+### Models
+
+`ModelProvider` speaks the OpenAI-compatible chat API (streaming). `ModelRouter` picks by `TaskClass`: `simple | normal | code | vision | reasoning | frontier`. Pluggable: Ollama, llama.cpp server, optional cloud.
+
+### Tools & permissions
+
+Every `Tool` declares a `ToolClass` and **must** call `PermissionGate.check` before side effects. Default policy: `AutonomyLevel × ToolClass → allow | ask | deny` (see `DEFAULT_PERMISSION_POLICY` in contracts). `ask` publishes `permission.asked` so the UI can prompt; resolve via `permission.resolved` / `resolvePermission` IPC.
+
+## Packages
+
+| Package | Name | Owner | Responsibility |
+|---------|------|-------|----------------|
+| `packages/shared` | `@calypso/shared` | (contracts) | **Only** cross-package API surface |
+| `packages/core` | `@calypso/core` | **Anky** | Orchestrator, task graph, workers, teams, bus, memory, scheduler, PermissionGate |
+| `packages/windows-control` | `@calypso/windows-control` | **Trice** | Long-lived PowerShell host (stdin/stdout JSON), UI Automation, SendInput, windows/processes, files, screenshots |
+| `packages/browser` | `@calypso/browser` | **Spin** | Playwright + managed Chromium, persistent context per worker |
+| `packages/tools-system` | `@calypso/tools-system` | (shared / Tyran) | Filesystem, terminal, code exec |
+| `packages/models` | `@calypso/models` | **Angen** | Providers, ModelRouter, hardware benchmark stub |
+| `packages/ui` | `@calypso/ui` | **Theriz** | Design system |
+| `apps/desktop` | `@calypso/desktop` | **Theriz** (shell/packaging/QA) + **Tyran** (integration) | Electron main, preload, renderer, utilityProcess entry, electron-builder |
+
+**Voice, packaging, QA:** Theriz · **Integration:** Tyran
+
+## Rule: contracts only
+
+> Subsystems talk **only** through `@calypso/shared` contracts.  
+> Do not import implementation details across package boundaries.
+
+## Dev commands
+
+```bash
+# from repo root
+npm install
+npm run build          # build all packages + desktop (main/preload/core/renderer)
+npm run typecheck      # tsc --noEmit across workspaces
+npm run dev -w @calypso/desktop   # vite + electron (after a main/preload/core build)
+
+# Windows packaging (run on Windows CI / machine)
+npm run pack:win -w @calypso/desktop
+```
+
+Workspace layout uses npm workspaces (`apps/*`, `packages/*`). `pnpm-workspace.yaml` is present if you prefer pnpm.
+
+## Key contracts (`packages/shared/src/contracts.ts`)
+
+Worker, WorkerStatus, AutonomyLevel, Team, Project, Artifact, Conversation, Message, Task / TaskGraph, Plan, Tool / ToolCall / ToolResult, ToolClass, ToolPermission, PermissionGate / PermissionDecision, DEFAULT_PERMISSION_POLICY, ModelProvider, ModelRouter, TaskClass, MemoryStore / MemoryEntry / MemoryScope, Routine, BrowserSession / BrowserAction, ComputerAction, ActionResult, ControlSession / ControlSessionCommand, CalypsoEvent, CoreRequest / CoreResponse / CorePush, CalypsoIpcApi.

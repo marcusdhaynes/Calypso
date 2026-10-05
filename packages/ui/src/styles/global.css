@@ -1,0 +1,218 @@
+/* Calypso global styles — import once from the desktop renderer. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  color-scheme: dark;
+
+  --cal-color-abyss: #07090d;
+  --cal-color-deep: #0c1017;
+  --cal-color-surface: #121821;
+  --cal-color-raised: #181f2b;
+  --cal-color-overlay: #1e2736;
+  --cal-color-glass: rgba(18, 24, 33, 0.72);
+
+  --cal-color-border: rgba(255, 255, 255, 0.06);
+  --cal-color-border-strong: rgba(255, 255, 255, 0.12);
+  --cal-color-border-focus: rgba(56, 210, 193, 0.55);
+
+  --cal-color-text: #f2f5f9;
+  --cal-color-text-secondary: #9aa6b8;
+  --cal-color-text-muted: #657286;
+  --cal-color-text-inverse: #07090d;
+
+  --cal-color-accent: #38d2c1;
+  --cal-color-accent-soft: rgba(56, 210, 193, 0.14);
+  --cal-color-accent-hover: #4fe0d0;
+  --cal-color-accent-pressed: #2bb8a8;
+  --cal-color-violet: #8b7cff;
+  --cal-color-violet-soft: rgba(139, 124, 255, 0.14);
+  --cal-color-coral: #ff7a6e;
+  --cal-color-gold: #f0c25a;
+
+  --cal-color-success: #3dd68c;
+  --cal-color-warning: #f0c25a;
+  --cal-color-danger: #ff6b7a;
+  --cal-color-info: #5ba8ff;
+
+  --cal-font-sans: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --cal-font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  --cal-font-display: "Inter", "Segoe UI", system-ui, sans-serif;
+
+  --cal-radius-sm: 6px;
+  --cal-radius-md: 10px;
+  --cal-radius-lg: 14px;
+  --cal-radius-xl: 18px;
+  --cal-radius-2xl: 24px;
+  --cal-radius-pill: 999px;
+
+  --cal-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --cal-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --cal-shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --cal-shadow-glow: 0 0 24px rgba(56, 210, 193, 0.22);
+  --cal-shadow-focus: 0 0 0 3px rgba(56, 210, 193, 0.28);
+
+  --cal-space-1: 2px;
+  --cal-space-2: 4px;
+  --cal-space-3: 6px;
+  --cal-space-4: 8px;
+  --cal-space-5: 10px;
+  --cal-space-6: 12px;
+  --cal-space-8: 16px;
+  --cal-space-10: 24px;
+  --cal-space-12: 32px;
+
+  --cal-duration-fast: 120ms;
+  --cal-duration-normal: 200ms;
+  --cal-duration-slow: 320ms;
+  --cal-ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cal-ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --cal-sidebar-width: 260px;
+  --cal-sidebar-collapsed: 68px;
+  --cal-titlebar-height: 40px;
+  --cal-max-content: 820px;
+
+  --cal-blur-sm: 8px;
+  --cal-blur-md: 16px;
+  --cal-blur-lg: 24px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--cal-font-sans);
+  font-size: 14.5px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  color: var(--cal-color-text);
+  background: var(--cal-color-abyss);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+a {
+  color: var(--cal-color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--cal-color-accent-hover);
+}
+
+::selection {
+  background: var(--cal-color-accent-soft);
+  color: var(--cal-color-text);
+}
+
+/* Scrollbars — thin, quiet */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--cal-radius-pill);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Focus ring utility */
+.cal-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--cal-shadow-focus);
+}
+
+/* Status pulse */
+@keyframes cal-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+}
+
+.cal-pulse {
+  animation: cal-pulse 1.6s var(--cal-ease-standard) infinite;
+}
+
+@keyframes cal-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cal-fade-in {
+  animation: cal-fade-in var(--cal-duration-normal) var(--cal-ease-entrance) both;
+}
+
+@keyframes cal-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.cal-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: cal-shimmer 1.8s linear infinite;
+}
