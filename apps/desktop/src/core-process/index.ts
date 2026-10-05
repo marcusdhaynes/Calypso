@@ -4,7 +4,7 @@
  * Same protocol can later be served over localhost WebSocket.
  */
 import { Orchestrator } from "@calypso/core";
-import { BrowserSessionManager, createBrowserTools } from "@calypso/browser";
+import { createBrowserControl, type BrowserControl } from "@calypso/browser";
 import { createSystemTools } from "@calypso/tools-system";
 import {
   createWindowsControl,
@@ -170,10 +170,10 @@ orchestrator.bus.subscribe((event: CalypsoEvent) => {
 });
 
 // ---- Tools ----
-const browserManager = new BrowserSessionManager({
+const browserControl: BrowserControl = createBrowserControl({
   dataRoot: path.join(path.dirname(databasePath), "browser-profiles"),
 });
-for (const tool of createBrowserTools(browserManager)) {
+for (const tool of browserControl.tools) {
   orchestrator.registerTool(tool);
 }
 for (const tool of createSystemTools()) {
