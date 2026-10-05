@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { Artifact, BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { Artifact, BrowserRuntimeProgress, CalypsoSettings, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   ArtifactsPanel,
@@ -122,6 +122,12 @@ export function App() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<CalypsoSettings | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsApiKeyDraft, setSettingsApiKeyDraft] = useState("");
+  const [settingsBaseUrlDraft, setSettingsBaseUrlDraft] = useState("");
+  const [settingsModelIdDraft, setSettingsModelIdDraft] = useState("");
+  const [settingsNote, setSettingsNote] = useState<string | null>(null);
 
   const refreshTeams = useCallback(() => {
     void window.calypso?.listTeams?.().then(setTeams).catch(() => undefined);
@@ -132,6 +138,59 @@ export function App() {
   const refreshArtifacts = useCallback(() => {
     void window.calypso?.listArtifacts?.().then(setArtifacts).catch(() => undefined);
   }, []);
+
+  const refreshSettings = useCallback(() => {
+    void window.calypso?.getSettings?.().then((s) => {
+      setSettings(s);
+      setSettingsBaseUrlDraft(s.frontier.baseUrl);
+      setSettingsModelIdDraft(s.frontier.modelId);
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (nav === "settings") refreshSettings();
+  }, [nav, refreshSettings]);
+
+  const saveCloudSettings = useCallback(
+    async (patch: {
+      cloudModelsEnabled?: boolean;
+      baseUrl?: string;
+      modelId?: string;
+      apiKey?: string;
+    }) => {
+      if (!window.calypso?.updateSettings) return;
+      setSettingsBusy(true);
+      setSettingsNote(null);
+      try {
+        const next = await window.calypso.updateSettings({
+          cloudModelsEnabled: patch.cloudModelsEnabled,
+          frontier: {
+            enabled: patch.cloudModelsEnabled,
+            baseUrl: patch.baseUrl,
+            modelId: patch.modelId,
+            ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
+          },
+        });
+        setSettings(next);
+        setSettingsBaseUrlDraft(next.frontier.baseUrl);
+        setSettingsModelIdDraft(next.frontier.modelId);
+        if (patch.apiKey !== undefined) setSettingsApiKeyDraft("");
+        setSettingsNote(
+          next.cloudModelsEnabled
+            ? next.hasCloudApiKey
+              ? "Cloud frontier enabled."
+              : "Cloud frontier on — add OPENAI_API_KEY / CALYPSO_OPENAI_API_KEY or paste a key below (frontier falls back to local until a key is available)."
+            : "Cloud frontier disabled — frontier tasks use local primary (qwen3:8b)."
+        );
+        void window.calypso.getModelStatus?.().then(setModelStatus).catch(() => undefined);
+      } catch (err) {
+        setSettingsNote(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSettingsBusy(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     const api = window.calypso;
@@ -159,6 +218,11 @@ export function App() {
     void api.getModelStatus?.().then(setModelStatus).catch(() => undefined);
     void api.getAppInfo?.().then((info) => {
       if (info?.modelStatus) setModelStatus(info.modelStatus);
+    }).catch(() => undefined);
+    void api.getSettings?.().then((s) => {
+      setSettings(s);
+      setSettingsBaseUrlDraft(s.frontier.baseUrl);
+      setSettingsModelIdDraft(s.frontier.modelId);
     }).catch(() => undefined);
 
     if (api.listWorkers) {
@@ -723,6 +787,8 @@ export function App() {
                     : "Pick or create a team"
                   : nav === "routines"
                     ? `${routines.length} routine${routines.length === 1 ? "" : "s"}`
+                    : nav === "settings"
+                      ? "Local models · optional cloud frontier"
                     : selected
                       ? `Talking with ${selected.name}`
                       : "Home"}
@@ -837,7 +903,153 @@ export function App() {
               }}
             />
           ) : null}
-          {nav === "artifacts" ? null : lines.map((line) => (
+          {nav === "settings" ? (
+            <section
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+                padding: 16,
+                borderRadius: 14,
+                border: `1px solid ${colors.border}`,
+                background: colors.raised,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14.5, marginBottom: 6 }}>
+                  Use cloud frontier models
+                </div>
+                <p style={{ margin: 0, fontSize: 12.5, color: colors.textMuted, lineHeight: 1.5 }}>
+                  Optional OpenAI-compatible cloud for TaskClass <code>frontier</code> (default{" "}
+                  <code>gpt-4o</code>). Off by default — when disabled, frontier silently uses the local
+                  primary (<code>qwen3:8b</code>). API keys are read from{" "}
+                  <code>OPENAI_API_KEY</code> / <code>CALYPSO_OPENAI_API_KEY</code> or the field below;
+                  keys are never logged.
+                </p>
+              </div>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  fontSize: 13.5,
+                  cursor: settingsBusy ? "wait" : "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!settings?.cloudModelsEnabled}
+                  disabled={settingsBusy || !settings}
+                  onChange={(e) => {
+                    void saveCloudSettings({ cloudModelsEnabled: e.target.checked });
+                  }}
+                />
+                Enable cloud frontier
+              </label>
+              <div style={{ fontSize: 12, color: colors.textMuted }}>
+                API key:{" "}
+                {settings?.hasCloudApiKey ? (
+                  <span style={{ color: colors.accent }}>available (env or saved)</span>
+                ) : (
+                  <span>not set — frontier falls back to local while enabled</span>
+                )}
+              </div>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5 }}>
+                Base URL
+                <input
+                  type="text"
+                  value={settingsBaseUrlDraft}
+                  disabled={settingsBusy}
+                  placeholder="https://api.openai.com/v1"
+                  onChange={(e) => setSettingsBaseUrlDraft(e.target.value)}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${colors.border}`,
+                    background: colors.deep,
+                    color: colors.textPrimary,
+                    fontFamily: typography.fontSans,
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5 }}>
+                Model id
+                <input
+                  type="text"
+                  value={settingsModelIdDraft}
+                  disabled={settingsBusy}
+                  placeholder="gpt-4o"
+                  onChange={(e) => setSettingsModelIdDraft(e.target.value)}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${colors.border}`,
+                    background: colors.deep,
+                    color: colors.textPrimary,
+                    fontFamily: typography.fontSans,
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5 }}>
+                API key (optional; leave blank to keep env / existing)
+                <input
+                  type="password"
+                  value={settingsApiKeyDraft}
+                  disabled={settingsBusy}
+                  placeholder={settings?.hasCloudApiKey ? "•••••••• (saved or from env)" : "sk-…"}
+                  autoComplete="off"
+                  onChange={(e) => setSettingsApiKeyDraft(e.target.value)}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${colors.border}`,
+                    background: colors.deep,
+                    color: colors.textPrimary,
+                    fontFamily: typography.fontSans,
+                  }}
+                />
+              </label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={settingsBusy}
+                  style={chipBtnStyle}
+                  onClick={() => {
+                    void saveCloudSettings({
+                      cloudModelsEnabled: settings?.cloudModelsEnabled,
+                      baseUrl: settingsBaseUrlDraft.trim() || undefined,
+                      modelId: settingsModelIdDraft.trim() || undefined,
+                      ...(settingsApiKeyDraft.trim()
+                        ? { apiKey: settingsApiKeyDraft.trim() }
+                        : {}),
+                    });
+                  }}
+                >
+                  Save frontier settings
+                </button>
+                <button
+                  type="button"
+                  disabled={settingsBusy || (!settingsApiKeyDraft && !settings?.hasCloudApiKey)}
+                  style={chipBtnStyle}
+                  onClick={() => {
+                    setSettingsApiKeyDraft("");
+                    void saveCloudSettings({
+                      cloudModelsEnabled: settings?.cloudModelsEnabled,
+                      apiKey: "",
+                    });
+                  }}
+                >
+                  Clear saved key
+                </button>
+              </div>
+              {settingsNote ? (
+                <div style={{ fontSize: 12.5, color: colors.textSecondary, lineHeight: 1.45 }}>
+                  {settingsNote}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+          {nav === "artifacts" || nav === "settings" ? null : lines.map((line) => (
             <article
               key={line.id}
               className="cal-fade-in"
@@ -872,7 +1084,7 @@ export function App() {
           ))}
         </div>
 
-        {nav === "artifacts" ? null : (
+        {nav === "artifacts" || nav === "settings" ? null : (
         <ChatComposer
           onSend={onSend}
           disabled={modelWarming}

@@ -134,3 +134,51 @@ export function createLlamaCppProvider(
     baseUrl,
   });
 }
+
+/** Default OpenAI-compatible cloud base URL. */
+export const DEFAULT_OPENAI_CLOUD_BASE_URL = "https://api.openai.com/v1";
+
+/**
+ * Resolve a cloud API key without logging it.
+ * Prefers explicit opt → CALYPSO_OPENAI_API_KEY → OPENAI_API_KEY.
+ */
+export function resolveOpenAIApiKey(explicit?: string): string | undefined {
+  const fromOpt = explicit?.trim();
+  if (fromOpt) return fromOpt;
+  const fromCalypso = process.env.CALYPSO_OPENAI_API_KEY?.trim();
+  if (fromCalypso) return fromCalypso;
+  const fromOpenAI = process.env.OPENAI_API_KEY?.trim();
+  if (fromOpenAI) return fromOpenAI;
+  return undefined;
+}
+
+export interface OpenAICloudProviderOptions {
+  /** Defaults to "openai" (matches DEFAULT_RTX_4060_8GB_ROUTES.frontier). */
+  id?: string;
+  displayName?: string;
+  /** OpenAI-compatible base URL. Default https://api.openai.com/v1 */
+  baseUrl?: string;
+  /** Explicit key; otherwise env CALYPSO_OPENAI_API_KEY / OPENAI_API_KEY. */
+  apiKey?: string;
+}
+
+/**
+ * Factory for an OpenAI-compatible cloud frontier provider.
+ * Returns null when no API key is available (caller should keep cloud unregistered).
+ * Never logs the key.
+ */
+export function createOpenAICloudProvider(
+  opts: OpenAICloudProviderOptions = {}
+): OpenAICompatibleProvider | null {
+  const apiKey = resolveOpenAIApiKey(opts.apiKey);
+  if (!apiKey) return null;
+  return new OpenAICompatibleProvider({
+    id: opts.id ?? "openai",
+    displayName: opts.displayName ?? "OpenAI (cloud)",
+    baseUrl: (opts.baseUrl?.trim() || DEFAULT_OPENAI_CLOUD_BASE_URL).replace(
+      /\/$/,
+      ""
+    ),
+    apiKey,
+  });
+}

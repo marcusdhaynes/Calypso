@@ -97,6 +97,8 @@ const api: CalypsoIpcApi = {
   getInferenceRuntimeStatus: () => ipcRenderer.invoke("calypso:getInferenceRuntimeStatus"),
   preloadPrimaryModel: () => ipcRenderer.invoke("calypso:preloadPrimaryModel"),
   getModelStatus: () => ipcRenderer.invoke("calypso:getModelStatus"),
+  getSettings: () => ipcRenderer.invoke("calypso:getSettings"),
+  updateSettings: (settings) => ipcRenderer.invoke("calypso:updateSettings", settings),
   getAppInfo: () => ipcRenderer.invoke("calypso:getAppInfo"),
   onTray(handler: (payload: { action: string }) => void) {
     const listener = (_event: Electron.IpcRendererEvent, payload: { action: string }) => {

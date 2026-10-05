@@ -317,6 +317,8 @@ function registerIpc(): void {
           conversationId: (args[3] as { teamId?: string; conversationId?: string } | undefined)
             ?.conversationId,
         });
+      case "updateSettings":
+        return callCore(method, { settings: args[0] });
       default:
         return callCore(method);
     }
@@ -325,6 +327,8 @@ function registerIpc(): void {
   const methods: CoreRequest["method"][] = [
     "getAppInfo",
     "getModelStatus",
+    "getSettings",
+    "updateSettings",
     "getFirstRunPlan",
     "ensureBrowserRuntime",
     "getBrowserRuntimeStatus",

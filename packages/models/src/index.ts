@@ -2,8 +2,21 @@ export {
   OpenAICompatibleProvider,
   createOllamaProvider,
   createLlamaCppProvider,
+  createOpenAICloudProvider,
+  resolveOpenAIApiKey,
+  DEFAULT_OPENAI_CLOUD_BASE_URL,
 } from "./providers/openai-compatible.js";
+export type { OpenAICloudProviderOptions } from "./providers/openai-compatible.js";
 export { DefaultModelRouter } from "./router/model-router.js";
+export type {
+  DefaultModelRouterOptions,
+  FrontierFallbackReason,
+} from "./router/model-router.js";
+export {
+  toPublicSettings,
+  hasCloudApiKeyAvailable,
+} from "./frontier/settings.js";
+export type { PersistedCalypsoSettings } from "./frontier/settings.js";
 export {
   probeHardware,
   recommendTaskClassRoutes,

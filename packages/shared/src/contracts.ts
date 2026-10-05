@@ -990,6 +990,63 @@ export type ConversationInput = Omit<Conversation, "createdAt" | "updatedAt"> & 
   updatedAt?: number;
 };
 
+
+// ---------------------------------------------------------------------------
+// App settings (persisted via core meta / IPC)
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional cloud frontier models (Angen). Default off — local-first.
+ * `cloudModelsEnabled` and `frontier.enabled` stay in sync.
+ */
+export interface FrontierSettings {
+  /** When false, TaskClass `frontier` never calls cloud (default false). */
+  enabled: boolean;
+  /** OpenAI-compatible base URL. Default https://api.openai.com/v1 */
+  baseUrl: string;
+  /** Cloud model id. Default gpt-4o */
+  modelId: string;
+}
+
+export interface CalypsoSettings {
+  /** Master toggle for cloud frontier providers (default false). */
+  cloudModelsEnabled: boolean;
+  frontier: FrontierSettings;
+  /**
+   * True when an API key is available from env
+   * (`CALYPSO_OPENAI_API_KEY` / `OPENAI_API_KEY`) or a stored settings value.
+   * The raw key is never returned over IPC.
+   */
+  hasCloudApiKey: boolean;
+}
+
+/** Partial update for `updateSettings` IPC (apiKey may be set; empty string clears stored key). */
+export interface CalypsoSettingsUpdate {
+  cloudModelsEnabled?: boolean;
+  frontier?: {
+    enabled?: boolean;
+    baseUrl?: string;
+    modelId?: string;
+    /** Optional UI-stored key; prefer env when unset. Never logged. */
+    apiKey?: string;
+  };
+}
+
+export const DEFAULT_FRONTIER_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_FRONTIER_MODEL_ID = "gpt-4o";
+
+export function defaultCalypsoSettings(): CalypsoSettings {
+  return {
+    cloudModelsEnabled: false,
+    frontier: {
+      enabled: false,
+      baseUrl: DEFAULT_FRONTIER_BASE_URL,
+      modelId: DEFAULT_FRONTIER_MODEL_ID,
+    },
+    hasCloudApiKey: false,
+  };
+}
+
 export interface ModelStatus {
   ready: boolean;
   providerId?: string;
@@ -1111,6 +1168,12 @@ export type CoreRequest =
         conversationId?: ConversationId;
       };
     }
+  | { id: string; method: "getSettings"; params?: undefined }
+  | {
+      id: string;
+      method: "updateSettings";
+      params: { settings: CalypsoSettingsUpdate };
+    }
   | { id: string; method: "shutdown"; params?: undefined };
 
 export type CoreResponse =
@@ -1188,6 +1251,8 @@ export interface CalypsoIpcApi {
   /** Warm resident primary (qwen3:8b) into VRAM with keep_alive; emits models.runtime.progress. */
   preloadPrimaryModel(): Promise<void>;
   getModelStatus(): Promise<ModelStatus>;
+  getSettings(): Promise<CalypsoSettings>;
+  updateSettings(settings: CalypsoSettingsUpdate): Promise<CalypsoSettings>;
   getAppInfo(): Promise<AppInfo>;
   /** Tray menu actions (new-command, etc.). */
   onTray(handler: (payload: { action: string }) => void): () => void;

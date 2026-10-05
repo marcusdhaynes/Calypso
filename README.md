@@ -57,6 +57,8 @@ SQLite via **better-sqlite3** in `@calypso/core` (`CalypsoDatabase` + `SqliteMem
 
 `ModelProvider` speaks the OpenAI-compatible chat API (streaming). `ModelRouter` picks by `TaskClass`: `simple | normal | code | vision | reasoning | frontier`. Pluggable: Ollama, llama.cpp server, optional cloud.
 
+**Cloud frontier (opt-in):** Settings toggle `cloudModelsEnabled` / `frontier.enabled` (default **false**, persisted in SQLite meta). When off, `frontier` silently falls back to local primary (`qwen3:8b`). When on, `DefaultModelRouter` resolves `frontier` to OpenAI-compatible cloud (`openai` / `gpt-4o` by default) via `createOpenAICloudProvider` if `OPENAI_API_KEY` / `CALYPSO_OPENAI_API_KEY` (or a Settings-stored key) is present — otherwise falls back locally and surfaces a soft status (does not crash chat). IPC: `getSettings` / `updateSettings`. Smoke: `node packages/models/test/frontier-router-smoke.mjs`.
+
 ### Tools & permissions
 
 Every `Tool` declares a `ToolClass` and **must** call `PermissionGate.check` before side effects. Default policy: `AutonomyLevel × ToolClass → allow | ask | deny` (see `DEFAULT_PERMISSION_POLICY` in contracts). `ask` publishes `permission.asked` so the UI can prompt; resolve via `permission.resolved` / `resolvePermission` IPC.

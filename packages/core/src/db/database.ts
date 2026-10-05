@@ -139,6 +139,29 @@ export class CalypsoDatabase {
     }
   }
 
+
+  // ---- meta (app settings etc.) ----
+
+  getMeta(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+      )
+      .run(key, value);
+  }
+
+  deleteMeta(key: string): boolean {
+    const info = this.db.prepare("DELETE FROM meta WHERE key = ?").run(key);
+    return info.changes > 0;
+  }
+
   close(): void {
     this.db.close();
   }

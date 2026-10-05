@@ -13,6 +13,7 @@ import {
 import {
   DefaultModelRouter,
   createOllamaProvider,
+  createOpenAICloudProvider,
   createSharedInferenceServer,
   OllamaAdmin,
   planFirstRunInference,
@@ -22,11 +23,16 @@ import {
   getInferenceRuntimeStatus,
   preloadPrimaryModel,
   PRIMARY_MODEL_KEEP_ALIVE,
+  toPublicSettings,
+  DEFAULT_RTX_4060_8GB_ROUTES,
   type FirstRunInferencePlan,
+  type PersistedCalypsoSettings,
 } from "@calypso/models";
 import type {
   AppInfo,
   CalypsoEvent,
+  CalypsoSettings,
+  CalypsoSettingsUpdate,
   Conversation,
   ConversationInput,
   CorePush,
@@ -101,11 +107,79 @@ const ollamaBase = createOllamaProvider();
 let modelReady = false;
 let modelStatusMessage = "Checking local model runtime…";
 
-const router = new DefaultModelRouter();
+const SETTINGS_META_KEY = "calypso.settings";
+
+const router = new DefaultModelRouter({ cloudModelsEnabled: false });
 // Register immediately so resolve() works; readiness is probed async.
 router.registerProvider(queuedProvider(ollamaBase, 1));
 
 let hardwareRoutesApplied = false;
+/** Last applied public settings (no raw API key). */
+let cachedSettings: CalypsoSettings | null = null;
+
+function readPersistedSettings(): PersistedCalypsoSettings | null {
+  try {
+    const raw = orchestrator.database?.getMeta(SETTINGS_META_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedCalypsoSettings;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedSettings(stored: PersistedCalypsoSettings): void {
+  orchestrator.database?.setMeta(SETTINGS_META_KEY, JSON.stringify(stored));
+}
+
+/**
+ * Register / unregister the OpenAI-compatible cloud provider from settings.
+ * Never logs the API key. Frontier route always points at openai/<modelId>.
+ */
+function applyCloudFrontierFromSettings(stored: PersistedCalypsoSettings): CalypsoSettings {
+  const { public: pub, stored: normalized } = toPublicSettings(stored);
+  const enabled = !!normalized.cloudModelsEnabled;
+  router.setCloudModelsEnabled(enabled);
+
+  // Always keep the frontier route table entry (DEFAULT_RTX_4060_8GB_ROUTES.frontier).
+  const modelId =
+    normalized.frontier?.modelId?.trim() ||
+    DEFAULT_RTX_4060_8GB_ROUTES.frontier.model;
+  const baseUrl = normalized.frontier?.baseUrl?.trim();
+  router.setRoute("frontier", "openai", modelId);
+
+  router.unregisterProvider("openai");
+  if (enabled) {
+    const cloud = createOpenAICloudProvider({
+      baseUrl,
+      apiKey: normalized.frontier?.apiKey,
+    });
+    if (cloud) {
+      router.registerProvider(cloud);
+    } else {
+      console.info(
+        "[models] Cloud frontier enabled but no API key (set OPENAI_API_KEY / CALYPSO_OPENAI_API_KEY or Settings); frontier will fall back to local primary."
+      );
+    }
+  }
+
+  cachedSettings = pub;
+  return pub;
+}
+
+function loadAndApplySettings(): CalypsoSettings {
+  const persisted = readPersistedSettings();
+  const { public: pub, stored } = toPublicSettings(persisted);
+  // Normalize missing meta once so defaults are durable.
+  if (!persisted) writePersistedSettings(stored);
+  return applyCloudFrontierFromSettings(stored);
+}
+
+function updateAndApplySettings(update: CalypsoSettingsUpdate): CalypsoSettings {
+  const persisted = readPersistedSettings();
+  const { public: pub, stored } = toPublicSettings(persisted, update);
+  writePersistedSettings(stored);
+  return applyCloudFrontierFromSettings(stored);
+}
 
 async function ensureRoutes(): Promise<void> {
   if (hardwareRoutesApplied) return;
@@ -121,6 +195,9 @@ async function ensureRoutes(): Promise<void> {
     >) {
       if (rec.providerId === "ollama") {
         router.setRoute(taskClass, "ollama", rec.model);
+      } else if (rec.providerId === "openai" || rec.providerId === "anthropic") {
+        // Record cloud frontier intent; actual provider gated by settings toggle + key.
+        router.setRoute(taskClass, rec.providerId, rec.model);
       }
     }
   } catch (err) {
@@ -130,8 +207,22 @@ async function ensureRoutes(): Promise<void> {
     router.setRoute("code", "ollama", "qwen3:8b");
     router.setRoute("vision", "ollama", "qwen2.5vl:3b");
     router.setRoute("reasoning", "ollama", "qwen3:8b");
+    router.setRoute(
+      "frontier",
+      DEFAULT_RTX_4060_8GB_ROUTES.frontier.providerId,
+      DEFAULT_RTX_4060_8GB_ROUTES.frontier.model
+    );
     modelStatusMessage =
       err instanceof Error ? err.message : "Hardware probe failed; using default routes";
+  }
+  // Apply persisted cloud toggle after local routes exist (needs orchestrator.database).
+  try {
+    loadAndApplySettings();
+  } catch (err) {
+    console.info(
+      "[models] Settings load failed; cloud frontier stays off:",
+      err instanceof Error ? err.message : err
+    );
   }
 }
 
@@ -148,6 +239,19 @@ async function refreshModelStatus(): Promise<ModelStatus> {
       err instanceof Error
         ? err.message
         : "Ollama is not reachable — chat will report the model as unavailable";
+  }
+  const settings = cachedSettings ?? (() => {
+    try {
+      return loadAndApplySettings();
+    } catch {
+      return null;
+    }
+  })();
+  if (settings?.cloudModelsEnabled && !settings.hasCloudApiKey) {
+    modelStatusMessage +=
+      " · Cloud frontier on but no API key (set OPENAI_API_KEY / CALYPSO_OPENAI_API_KEY or Settings)";
+  } else if (settings?.cloudModelsEnabled && settings.hasCloudApiKey) {
+    modelStatusMessage += " · Cloud frontier enabled";
   }
   return {
     ready: modelReady,
@@ -170,6 +274,31 @@ const orchestrator = new Orchestrator({
 orchestrator.bus.subscribe((event: CalypsoEvent) => {
   push({ channel: "event", event });
 });
+
+router.setFrontierFallbackHandler(({ message, reason }) => {
+  console.info(`[models] ${message}`);
+  // Soft status for UI when frontier was requested without a usable cloud provider.
+  if (reason === "no_api_key" || reason === "provider_missing") {
+    orchestrator.bus.publish({
+      type: "models.runtime.progress",
+      progress: {
+        phase: "error",
+        message,
+      },
+      at: Date.now(),
+    });
+  }
+});
+
+// Apply persisted settings once DB is open (frontier toggle default false).
+try {
+  loadAndApplySettings();
+} catch (err) {
+  console.info(
+    "[models] Initial settings apply skipped:",
+    err instanceof Error ? err.message : err
+  );
+}
 
 // Bridge agent-loop token streams onto the existing channel:"stream" IPC.
 orchestrator.setStreamHandler((streamPush) => {
@@ -349,6 +478,18 @@ async function handle(req: CoreRequest): Promise<void> {
       case "getModelStatus":
         respond({ id: req.id, ok: true, result: await refreshModelStatus() });
         return;
+      case "getSettings": {
+        await ensureRoutes();
+        const settings = cachedSettings ?? loadAndApplySettings();
+        respond({ id: req.id, ok: true, result: settings });
+        return;
+      }
+      case "updateSettings": {
+        await ensureRoutes();
+        const settings = updateAndApplySettings(req.params.settings);
+        respond({ id: req.id, ok: true, result: settings });
+        return;
+      }
       case "getFirstRunPlan": {
         const profile = await probeHardware();
         const plan = planFirstRunInference(profile);
