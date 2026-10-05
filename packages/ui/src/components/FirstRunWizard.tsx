@@ -148,6 +148,7 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               <li>Computer control can pause, stop, or take over anytime.</li>
               <li>Workers start on Ask for destructive actions.</li>
+              <li>Browser runtime (Chromium) downloads on first use into app data — not bundled in Calypso.exe.</li>
               <li>Microphone is optional — enable later for voice.</li>
               <li>Credentials stay in the OS credential store, never in logs.</li>
             </ul>

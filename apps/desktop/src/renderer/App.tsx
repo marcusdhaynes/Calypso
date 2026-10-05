@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { FirstRunPlan, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { ControlFrame, ControlSession, FirstRunPlan, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   Avatar,
   ChatComposer,
   FirstRunWizard,
+  LiveComputerView,
   PermissionToast,
   Sidebar,
   WorkerCard,
@@ -92,6 +93,9 @@ export function App() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [permissionAsk, setPermissionAsk] = useState<PermissionAsk | null>(null);
+  const [controlSession, setControlSession] = useState<ControlSession | null>(null);
+  const [controlFrame, setControlFrame] = useState<ControlFrame | null>(null);
+  const watchingFrames = useRef(false);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const streamingIds = useRef(new Set<string>());
   const [lines, setLines] = useState<ChatLine[]>([
@@ -153,6 +157,25 @@ export function App() {
       if (event.type === "permission.resolved") {
         setPermissionAsk((cur) => (cur?.requestId === event.requestId ? null : cur));
       }
+      if (event.type === "control.session.updated") {
+        const session = event.session;
+        setControlSession(session);
+        const active = session.status === "running" || session.status === "paused" || session.status === "awaiting_user" || session.status === "user_controlling";
+        if (active && !watchingFrames.current) {
+          watchingFrames.current = true;
+          void api.watchFrames?.().catch(() => {
+            watchingFrames.current = false;
+          });
+        }
+        if (!active && watchingFrames.current) {
+          watchingFrames.current = false;
+          setControlFrame(null);
+          void api.unwatchFrames?.().catch(() => undefined);
+        }
+      }
+      if (event.type === "control.frame") {
+        setControlFrame(event.frame);
+      }
     });
 
     const offStream = api.onStream?.((push) => {
@@ -206,6 +229,10 @@ export function App() {
     return () => {
       offEvent?.();
       offStream?.();
+      if (watchingFrames.current) {
+        watchingFrames.current = false;
+        void api.unwatchFrames?.().catch(() => undefined);
+      }
     };
   }, []);
 
@@ -411,6 +438,20 @@ export function App() {
             </div>
           </div>
         </header>
+
+
+        {controlSession && controlSession.status !== "stopped" ? (
+          <div style={{ padding: "16px 24px 0", maxWidth: 960, width: "100%", margin: "0 auto" }}>
+            <LiveComputerView
+              session={controlSession}
+              worker={workers.find((w) => w.id === controlSession.workerId)}
+              frame={controlFrame}
+              onCommand={(command) => {
+                void window.calypso?.controlCommand?.(command);
+              }}
+            />
+          </div>
+        ) : null}
 
         <div
           style={{
