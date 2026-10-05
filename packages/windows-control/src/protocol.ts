@@ -80,6 +80,27 @@ export type HostResponse =
   | { id: string; ok: true; result: unknown }
   | { id: string; ok: false; error: string; code?: HostErrorCode };
 
+/**
+ * What the host saw after an input action (Trice). Every input action result
+ * carries one:
+ * - passed: the intended effect was observed (verified = true)
+ * - failed: the host saw that nothing happened; the controller retries once
+ *   when retrySafe, then returns ok=false with code verify_failed
+ * - unknown: the host couldn't tell; the worker should look at the screen
+ */
+export interface ActionVerification {
+  status: "passed" | "failed" | "unknown";
+  checks: string[];
+  changed: string[];
+  note: string;
+  retrySafe: boolean;
+}
+
+export function verificationOf(result: unknown): ActionVerification | undefined {
+  const v = (result as { verification?: ActionVerification } | null | undefined)?.verification;
+  return v && typeof v === "object" && typeof v.status === "string" ? v : undefined;
+}
+
 export interface ScreenshotResult {
   width: number;
   height: number;

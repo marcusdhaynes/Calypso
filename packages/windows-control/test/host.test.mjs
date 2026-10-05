@@ -38,6 +38,22 @@ test("controller: execute, retries, events, after-screenshot", async () => {
   await c.dispose(); await h.stop();
 });
 
+test("controller: verification retries once when safe, then fails clearly", async () => {
+  const h = makeHost(); const b = bus();
+  const c = new ComputerController(h, b, { settleMs: 1 });
+  const s = c.openSession({ workerId: "w1", objective: "Verify" });
+  const lost = await c.execute(s.id, { type: "type", text: "lost", locator: { kind: "name", name: "Search" } }, { captureAfter: false });
+  assert.equal(lost.ok, true); assert.equal(lost.verified, true); assert.equal(lost.retries, 1);
+  const never = await c.execute(s.id, { type: "type", text: "never", locator: { kind: "name", name: "Search" } }, { captureAfter: false });
+  assert.equal(never.ok, false); assert.equal(never.retries, 1); assert.equal(never.output.code, "verify_failed");
+  assert.match(never.error, /didn't take effect \(tried 2 times\): the field's text didn't change/);
+  const rc = await c.execute(s.id, { type: "rightClick", locator: { kind: "coords", x: 5, y: 5 } }, { captureAfter: false });
+  assert.equal(rc.ok, false); assert.equal(rc.retries, 0, "not retried when unsafe");
+  const hk = await c.execute(s.id, { type: "hotkey", keys: ["ctrl", "c"] }, { captureAfter: false });
+  assert.equal(hk.ok, true); assert.equal(hk.verified, false); assert.equal(hk.output.verification.status, "unknown");
+  await c.dispose(); await h.stop();
+});
+
 test("controller: user input mid-action hands control to the user, returnControl resumes", async () => {
   const h = makeHost(); const b = bus();
   const c = new ComputerController(h, b, { settleMs: 1 });

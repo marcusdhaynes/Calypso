@@ -412,6 +412,167 @@ function Focus-Element($el) {
 }
 
 # --------------------------------------------------------------------------
+# Verification: after each input action, look again and check it took effect.
+# Actions return verification = @{ status; checks; changed; note; retrySafe }:
+#   passed  - we saw the intended effect
+#   failed  - we saw that nothing happened (Node may retry once if retrySafe)
+#   unknown - we couldn't tell; the worker should look before relying on it
+# --------------------------------------------------------------------------
+function New-Verification([string]$status, $checks, $changed, [string]$note, [bool]$retrySafe) {
+  return @{
+    status = $status
+    checks = @($checks | Where-Object { $_ })
+    changed = @($changed | Where-Object { $_ })
+    note = $note
+    retrySafe = $retrySafe
+  }
+}
+
+function Safe-Pattern($el, $pattern) {
+  if (-not $el) { return $null }
+  try { return Try-Pattern $el $pattern } catch { return $null }
+}
+
+function Get-RuntimeKey($el) {
+  if (-not $el) { return $null }
+  try { return ($el.GetRuntimeId() -join '.') } catch { return $null }
+}
+
+function Get-FocusedElement {
+  if (-not $script:UiaLoaded) { return $null }
+  try { return [System.Windows.Automation.AutomationElement]::FocusedElement } catch { return $null }
+}
+
+function Get-ElementLabel($el) {
+  if (-not $el) { return "the element" }
+  try {
+    $c = $el.Current
+    $t = $c.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+    if ($c.Name) { return "$t '$($c.Name)'" }
+    return $t
+  } catch { return "the element" }
+}
+
+function Normalize-Text([string]$s) {
+  if ($null -eq $s) { return $null }
+  return (($s -replace "`r`n", "`n") -replace "`r", "`n")
+}
+
+# True when $el or something inside it has keyboard focus.
+function Test-HasFocus($el) {
+  $f = Get-FocusedElement
+  if (-not $f) { return $false }
+  $target = Get-RuntimeKey $el
+  if (-not $target) { return $false }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $cur = $f
+  for ($n = 0; $cur -and $n -lt 12; $n++) {
+    if ((Get-RuntimeKey $cur) -eq $target) { return $true }
+    try { $cur = $walker.GetParent($cur) } catch { $cur = $null }
+  }
+  return $false
+}
+
+# Text of an editable element: the text just before the caret (TextPattern),
+# else the whole value (ValuePattern), else the document start. $null if unreadable.
+function Read-EditText($el, [int]$tailChars) {
+  if (-not $el) { return $null }
+  try { if ($el.Current.IsPassword) { return $null } } catch { return $null }
+  $tp = Safe-Pattern $el ([System.Windows.Automation.TextPattern]::Pattern)
+  if ($tp -and $tailChars -gt 0) {
+    try {
+      $sel = $tp.GetSelection()
+      if ($sel -and $sel.Length -gt 0) {
+        $r = $sel[0].Clone()
+        [void]$r.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [System.Windows.Automation.Text.TextUnit]::Character, -$tailChars)
+        return @{ kind = "caret"; text = (Normalize-Text $r.GetText(-1)) }
+      }
+    } catch {}
+  }
+  $vp = Safe-Pattern $el ([System.Windows.Automation.ValuePattern]::Pattern)
+  if ($vp) { try { return @{ kind = "value"; text = (Normalize-Text ([string]$vp.Current.Value)) } } catch {} }
+  if ($tp) { try { return @{ kind = "document"; text = (Normalize-Text $tp.DocumentRange.GetText(20000)) } } catch {} }
+  return $null
+}
+
+function Get-UiSnapshot {
+  $fg = [CalypsoNative]::GetForegroundWindow()
+  $snap = @{ fg = [int64]$fg; title = [CalypsoNative]::WindowText($fg); focus = $null; text = $null }
+  $f = Get-FocusedElement
+  if ($f) {
+    $snap.focus = Get-RuntimeKey $f
+    $t = Read-EditText $f 200
+    if ($t) { $snap.text = $t.text }
+  }
+  return $snap
+}
+
+function Compare-UiSnapshot($a, $b) {
+  $changed = @()
+  if ($a.fg -ne $b.fg) { $changed += "window" }
+  elseif ($a.title -ne $b.title) { $changed += "title" }
+  if ($a.focus -ne $b.focus) { $changed += "focus" }
+  elseif ($a.text -ne $b.text) { $changed += "text" }
+  return ,$changed
+}
+
+# Is the target actually on top at the click point?
+#   ok = $true  -> the element under the point is the target or inside it
+#   ok = $false -> another app's window is covering it
+#   ok = $null  -> can't tell
+function Test-HitTarget($el, [int]$x, [int]$y) {
+  $hit = $null
+  try { $hit = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point($x, $y))) } catch {}
+  if (-not $hit) { return @{ ok = $null; covering = "" } }
+  $target = Get-RuntimeKey $el
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $cur = $hit
+  for ($n = 0; $cur -and $n -lt 25; $n++) {
+    if ((Get-RuntimeKey $cur) -eq $target) { return @{ ok = $true; covering = "" } }
+    try { $cur = $walker.GetParent($cur) } catch { $cur = $null }
+  }
+  $hitPid = 0; $elPid = 0
+  try { $hitPid = $hit.Current.ProcessId; $elPid = $el.Current.ProcessId } catch {}
+  $what = Get-ElementLabel $hit
+  if ($hitPid -and $elPid -and $hitPid -ne $elPid) {
+    $pname = "another app"; try { $pname = (Get-Process -Id $hitPid -ErrorAction Stop).ProcessName } catch {}
+    return @{ ok = $false; covering = "$what ($pname)" }
+  }
+  return @{ ok = $null; covering = $what }
+}
+
+function Find-ScrollPattern([int]$x, [int]$y) {
+  $cur = $null
+  try { $cur = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point($x, $y))) } catch {}
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  for ($n = 0; $cur -and $n -lt 15; $n++) {
+    $sp = Safe-Pattern $cur ([System.Windows.Automation.ScrollPattern]::Pattern)
+    if ($sp) { return $sp }
+    try { $cur = $walker.GetParent($cur) } catch { $cur = $null }
+  }
+  return $null
+}
+
+function Verify-Typed($before, $after, [string]$exp, [bool]$retrySafe) {
+  if ($exp.Length -eq 0) { return New-Verification "unknown" @() @() "Nothing to type" $false }
+  if ($null -eq $after) {
+    return New-Verification "unknown" @("field text not readable") @() "Typed it, but this field doesn't expose its text; look at the screen to confirm" $false
+  }
+  $probe = $exp
+  if ($probe.Length -gt 400) { $probe = $probe.Substring($probe.Length - 400) }
+  if ($after.kind -eq "caret") { $hasIt = $after.text.EndsWith($probe, [StringComparison]::Ordinal) }
+  else { $hasIt = $after.text.Contains($probe) }
+  $same = ($null -ne $before) -and ($before.kind -eq $after.kind) -and ($before.text -ceq $after.text)
+  if ($hasIt -and -not $same) {
+    return New-Verification "passed" @("typed text is in the field ($($after.kind))") @("text") "" $false
+  }
+  if ($same) {
+    return New-Verification "failed" @("field text unchanged") @() "Typed $($exp.Length) characters but the field's text didn't change; the keystrokes may have gone to another window" $retrySafe
+  }
+  return New-Verification "unknown" @("field changed but text differs") @("text") "The field changed but doesn't contain the exact text (autocomplete, formatting, or a length limit?); look at the screen" $false
+}
+
+# --------------------------------------------------------------------------
 # Windows & processes
 # --------------------------------------------------------------------------
 function Get-WindowInfo([IntPtr]$h) {
@@ -555,7 +716,10 @@ function Invoke-ComputerAction($a) {
       Begin-InputAction
       $p = Resolve-Point $a.locator
       Move-To $p.x $p.y
-      return @{ x = $p.x; y = $p.y; method = "cursor" }
+      $cp = New-Object CalypsoNative+POINT; [void][CalypsoNative]::GetCursorPos([ref]$cp)
+      if ($cp.X -eq $p.x -and $cp.Y -eq $p.y) { $v = New-Verification "passed" @("cursor at target") @() "" $false }
+      else { $v = New-Verification "failed" @("cursor at ($($cp.X), $($cp.Y))") @() "The cursor ended at ($($cp.X), $($cp.Y)) instead of ($($p.x), $($p.y))" $true }
+      return @{ x = $p.x; y = $p.y; method = "cursor"; verified = ($v.status -eq "passed"); verification = $v }
     }
     { $_ -in "click", "doubleClick", "rightClick" } {
       $button = "left"; $count = 1
@@ -564,31 +728,64 @@ function Invoke-ComputerAction($a) {
       elseif ($a.button) { $button = [string]$a.button }
       Begin-InputAction
       $p = Resolve-Point $a.locator
+      if ($p.element) {
+        $enabled = $true; try { $enabled = $p.element.Current.IsEnabled } catch {}
+        if (-not $enabled) { throw [HostAbort]::new("not_clickable", "$(Get-ElementLabel $p.element) is disabled right now; nothing was clicked") }
+      }
+      $label = Get-ElementLabel $p.element
       # Semantic first: plain left click on an element that supports Invoke.
       if ($p.element -and $a.type -eq "click" -and $button -eq "left" -and -not $a.forceMouse) {
         $inv = Try-Pattern $p.element ([System.Windows.Automation.InvokePattern]::Pattern)
         if ($inv) {
           $inv.Invoke()
-          return @{ method = "uia_invoke"; element = (Describe-Element $p.element) }
+          $v = New-Verification "passed" @("invoked via UI Automation") @() "" $false
+          return @{ method = "uia_invoke"; element = (Describe-Element $p.element); verified = $true; verification = $v }
         }
         $toggle = Try-Pattern $p.element ([System.Windows.Automation.TogglePattern]::Pattern)
         if ($toggle) {
+          $tsBefore = $null; try { $tsBefore = [string]$toggle.Current.ToggleState } catch {}
           $toggle.Toggle()
-          return @{ method = "uia_toggle"; element = (Describe-Element $p.element) }
+          Start-Sleep -Milliseconds 60
+          $tsAfter = $null; try { $tsAfter = [string]$toggle.Current.ToggleState } catch {}
+          if ($null -ne $tsBefore -and $tsBefore -eq $tsAfter) {
+            $v = New-Verification "failed" @("toggle still $tsAfter") @() "Clicked $label but it stayed $tsAfter" $false
+          } else {
+            $v = New-Verification "passed" @("toggle $tsBefore to $tsAfter") @("toggle") "" $false
+          }
+          return @{ method = "uia_toggle"; element = (Describe-Element $p.element); toggleState = $tsAfter; verified = ($v.status -eq "passed"); verification = $v }
         }
         $sel = Try-Pattern $p.element ([System.Windows.Automation.SelectionItemPattern]::Pattern)
         if ($sel) {
           $sel.Select()
-          return @{ method = "uia_select"; element = (Describe-Element $p.element) }
+          Start-Sleep -Milliseconds 60
+          $isSel = $null; try { $isSel = $sel.Current.IsSelected } catch {}
+          if ($isSel -eq $false) { $v = New-Verification "failed" @("not selected") @() "Selected $label but it isn't selected" $true }
+          else { $v = New-Verification "passed" @("selected") @("selection") "" $false }
+          return @{ method = "uia_select"; element = (Describe-Element $p.element); verified = ($v.status -eq "passed"); verification = $v }
         }
       }
+      $hit = @{ ok = $null; covering = "" }
+      if ($p.element) {
+        $hit = Test-HitTarget $p.element $p.x $p.y
+        if ($hit.ok -eq $false) { throw [HostAbort]::new("not_clickable", "$label is covered by $($hit.covering); nothing was clicked") }
+      }
+      $snapBefore = Get-UiSnapshot
       Click-At $p.x $p.y $button $count
-      $res = @{ method = "mouse"; x = $p.x; y = $p.y; button = $button; count = $count }
+      Start-Sleep -Milliseconds 150
+      $snapAfter = Get-UiSnapshot
+      $changed = Compare-UiSnapshot $snapBefore $snapAfter
+      $checks = @()
+      if ($hit.ok -eq $true) { $checks += "target on top at click point" }
+      if ($changed.Count -gt 0) { $checks += "changed: $($changed -join ', ')" }
+      if ($changed.Count -gt 0 -or $hit.ok -eq $true) { $v = New-Verification "passed" $checks $changed "" $false }
+      else { $v = New-Verification "unknown" $checks $changed "Clicked, but focus, window, and text didn't change; look at the screen to confirm it did something" $false }
+      $res = @{ method = "mouse"; x = $p.x; y = $p.y; button = $button; count = $count; verified = ($v.status -eq "passed"); verification = $v }
       if ($p.element) { $res.element = Describe-Element $p.element }
       return $res
     }
     "drag" {
       Begin-InputAction
+      $snapBefore = Get-UiSnapshot
       $from = Resolve-Point $a.from
       $to = Resolve-Point $a.to
       Move-To $from.x $from.y
@@ -604,43 +801,89 @@ function Invoke-ComputerAction($a) {
       } finally {
         [void][CalypsoNative]::MouseButton("left", $false); Mark-Injected
       }
-      return @{ method = "mouse"; from = @{ x = $from.x; y = $from.y }; to = @{ x = $to.x; y = $to.y } }
+      Start-Sleep -Milliseconds 150
+      $changed = Compare-UiSnapshot $snapBefore (Get-UiSnapshot)
+      if ($changed.Count -gt 0) { $v = New-Verification "passed" @("changed: $($changed -join ', ')") $changed "" $false }
+      else { $v = New-Verification "unknown" @() @() "Dragged; look at the screen to confirm it landed" $false }
+      return @{ method = "mouse"; from = @{ x = $from.x; y = $from.y }; to = @{ x = $to.x; y = $to.y }; verified = ($v.status -eq "passed"); verification = $v }
     }
     "scroll" {
       Begin-InputAction
       if ($a.locator) { $p = Resolve-Point $a.locator; Move-To $p.x $p.y }
+      $cp = New-Object CalypsoNative+POINT; [void][CalypsoNative]::GetCursorPos([ref]$cp)
+      $sp = Find-ScrollPattern $cp.X $cp.Y
+      $vBefore = $null; $hBefore = $null
+      if ($sp) { try { $vBefore = $sp.Current.VerticalScrollPercent; $hBefore = $sp.Current.HorizontalScrollPercent } catch {} }
       $dy = 0; if ($a.deltaY) { $dy = [int]$a.deltaY }
       $dx = 0; if ($a.deltaX) { $dx = [int]$a.deltaX }
       # Contract: positive deltaY scrolls down, positive deltaX scrolls right (wheel notches).
       if ($dy -ne 0) { Assert-NotInterrupted; [void][CalypsoNative]::Wheel(-$dy, $false); Mark-Injected }
       if ($dx -ne 0) { Assert-NotInterrupted; [void][CalypsoNative]::Wheel($dx, $true); Mark-Injected }
-      return @{ method = "wheel"; deltaX = $dx; deltaY = $dy }
+      Start-Sleep -Milliseconds 150
+      $v = New-Verification "unknown" @() @() "Scrolled; this area doesn't report its scroll position, so look at the screen to confirm" $false
+      if ($sp -and $null -ne $vBefore) {
+        $vAfter = $null; $hAfter = $null
+        try { $vAfter = $sp.Current.VerticalScrollPercent; $hAfter = $sp.Current.HorizontalScrollPercent } catch {}
+        if ($null -ne $vAfter -and ($vAfter -ne $vBefore -or $hAfter -ne $hBefore)) {
+          $v = New-Verification "passed" @("scroll position $([Math]::Round($vBefore, 1))% to $([Math]::Round($vAfter, 1))%") @("scroll") "" $false
+        } elseif ($null -ne $vAfter) {
+          $edge = ""
+          if ($dy -gt 0 -and $vAfter -ge 99.9) { $edge = " (already at the bottom)" }
+          elseif ($dy -lt 0 -and $vAfter -ge 0 -and $vAfter -le 0.1) { $edge = " (already at the top)" }
+          $v = New-Verification "unknown" @("scroll position unchanged$edge") @() "The scroll position didn't change$edge" $false
+        }
+      }
+      return @{ method = "wheel"; deltaX = $dx; deltaY = $dy; verified = ($v.status -eq "passed"); verification = $v }
     }
     "type" {
       Begin-InputAction
       $text = [string]$a.text
+      $refocusable = $false
       if ($a.locator -and $a.locator.kind -ne "coords") {
         $el = Resolve-Element $a.locator
+        $enabled = $true; try { $enabled = $el.Current.IsEnabled } catch {}
+        if (-not $enabled) { throw [HostAbort]::new("not_clickable", "$(Get-ElementLabel $el) is disabled right now; nothing was typed") }
         $vp = Try-Pattern $el ([System.Windows.Automation.ValuePattern]::Pattern)
         if ($vp -and -not $vp.Current.IsReadOnly -and -not $a.forceKeys -and $text -notmatch "`n") {
           $expected = $text
           if ($a.append) { $expected = $vp.Current.Value + $text }
           $vp.SetValue($expected)
+          Start-Sleep -Milliseconds 40
           $readBack = $vp.Current.Value
-          return @{ method = "uia_value"; element = (Describe-Element $el); chars = $text.Length; verified = ($readBack -eq $expected) }
+          if ($readBack -ceq $expected) { $v = New-Verification "passed" @("field value matches") @("text") "" $false }
+          else { $v = New-Verification "failed" @("field value differs") @() "Set the text of $(Get-ElementLabel $el) but it reads back differently" (-not $a.append) }
+          return @{ method = "uia_value"; element = (Describe-Element $el); chars = $text.Length; verified = ($v.status -eq "passed"); verification = $v }
         }
         Focus-Element $el
         Start-Sleep -Milliseconds 30
+        if (-not (Test-HasFocus $el)) {
+          try { $pt = Get-ElementPoint $el; Click-At $pt.x $pt.y; Start-Sleep -Milliseconds 80 } catch [HostAbort] { throw } catch {}
+        }
+        if (-not (Test-HasFocus $el)) { throw [HostAbort]::new("not_clickable", "Couldn't put the cursor in $(Get-ElementLabel $el); nothing was typed") }
+        $refocusable = $true
       } elseif ($a.locator) {
         Click-At ([int]$a.locator.x) ([int]$a.locator.y)
+        Start-Sleep -Milliseconds 80
       }
+      $target = Get-FocusedElement
+      $exp = Normalize-Text $text
+      $tail = [Math]::Min($exp.Length, 400) + 40
+      $before = Read-EditText $target $tail
       Type-Text $text
-      return @{ method = "keys"; chars = $text.Length }
+      Start-Sleep -Milliseconds 120
+      $after = Read-EditText $target $tail
+      $v = Verify-Typed $before $after $exp $refocusable
+      return @{ method = "keys"; chars = $text.Length; verified = ($v.status -eq "passed"); verification = $v }
     }
     "hotkey" {
       Begin-InputAction
+      $snapBefore = Get-UiSnapshot
       Press-Hotkey $a.keys
-      return @{ method = "keys"; keys = $a.keys }
+      Start-Sleep -Milliseconds 150
+      $changed = Compare-UiSnapshot $snapBefore (Get-UiSnapshot)
+      if ($changed.Count -gt 0) { $v = New-Verification "passed" @("changed: $($changed -join ', ')") $changed "" $false }
+      else { $v = New-Verification "unknown" @() @() "Pressed it; focus, window, and text didn't change (normal for copy and some shortcuts), so look at the screen if it should have done something" $false }
+      return @{ method = "keys"; keys = $a.keys; verified = ($v.status -eq "passed"); verification = $v }
     }
     "focusWindow" {
       $h = Find-Window $a.title $a.processId
@@ -649,7 +892,19 @@ function Invoke-ComputerAction($a) {
       Mark-Injected
       Start-Sleep -Milliseconds 60
       $isFg = ([CalypsoNative]::GetForegroundWindow() -eq $h)
-      return @{ focused = $ok; verified = $isFg; window = (Get-WindowInfo $h) }
+      $checks = @()
+      if (-not $isFg) {
+        Start-Sleep -Milliseconds 150
+        $ok = [CalypsoNative]::ForceForeground($h)
+        Mark-Injected
+        Start-Sleep -Milliseconds 100
+        $isFg = ([CalypsoNative]::GetForegroundWindow() -eq $h)
+        $checks += "second bring-to-front attempt"
+      }
+      $info = Get-WindowInfo $h
+      if ($isFg) { $v = New-Verification "passed" ($checks + @("window is in front")) @("window") "" $false }
+      else { $v = New-Verification "failed" ($checks + @("window not in front")) @() "'$($info.title)' didn't come to the front; Windows may be blocking the focus change" $true }
+      return @{ focused = $ok; verified = $isFg; window = $info; verification = $v }
     }
     "launch" {
       $sp = @{ FilePath = [string]$a.path; PassThru = $true }

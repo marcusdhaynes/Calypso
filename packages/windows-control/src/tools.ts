@@ -75,6 +75,8 @@ export function createComputerTool(controller: ComputerController): Tool {
     description:
       "Operate the Windows desktop with the real mouse and keyboard: click, double-click, right-click, drag, scroll, type, press hotkeys, or switch windows. " +
       "Targets UI Automation elements first (clicks use the element's Invoke/Toggle/Select when it has one) and falls back to coordinates. " +
+      "After every action Calypso looks again and reports output.verification.status: passed (it saw the effect), unknown (it couldn't tell, so observe the screen before relying on it), " +
+      "or a failed result with code verify_failed (nothing happened; it already retried when safe, so try a different approach instead of repeating it). " +
       "The user can pause, stop, or take over at any time; a result with code user_input or stopped means stop and wait.",
     parameters: {
       type: "object",

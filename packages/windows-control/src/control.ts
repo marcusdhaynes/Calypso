@@ -23,7 +23,7 @@ import type {
   WorkerId,
 } from "@calypso/shared";
 import { nextRequestId, type PowerShellHost } from "./host.js";
-import type { HostComputerAction, HostErrorCode, HostResponse, InputState, ScreenshotResult } from "./protocol.js";
+import { verificationOf, type HostComputerAction, type HostErrorCode, type HostResponse, type InputState, type ScreenshotResult } from "./protocol.js";
 
 export interface EventPublisher {
   publish(event: CalypsoEvent): void;
@@ -36,6 +36,8 @@ export interface ExecuteOptions {
   captureAfter?: boolean;
   /** Retries for not_found / not_clickable (UI still rendering). Default 2. */
   retries?: number;
+  /** Retries when the host saw that the action had no effect and says a retry is safe. Default 1. */
+  verifyRetries?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -400,13 +402,34 @@ export class ComputerController {
       if (opts.captureBefore) beforeRef = (await this.screenshotFile())?.path;
 
       const maxRetries = opts.retries ?? 2;
+      const maxVerifyRetries = opts.verifyRetries ?? 1;
       let res: HostResponse | undefined;
-      let attempt = 0;
-      for (; attempt <= maxRetries; attempt++) {
+      let retries = 0;
+      let lookupRetries = 0;
+      let verifyRetries = 0;
+      for (;;) {
         res = await this.host.request({ id: nextRequestId("act"), method: "action", action }, opts.timeoutMs);
-        if (res.ok || !res.code || !RETRYABLE.includes(res.code) || attempt === maxRetries) break;
-        await sleep(300 * (attempt + 1));
-        await this.gate(sessionId, opts.signal);
+        if (!res.ok) {
+          if (res.code && RETRYABLE.includes(res.code) && lookupRetries < maxRetries) {
+            lookupRetries++;
+            retries++;
+            await sleep(300 * lookupRetries);
+            await this.gate(sessionId, opts.signal);
+            continue;
+          }
+          break;
+        }
+        // The host looked again after acting and saw nothing happen: retry once
+        // if it's safe (e.g. the field gets re-focused first), never for hotkeys.
+        const v = verificationOf(res.result);
+        if (v?.status === "failed" && v.retrySafe && verifyRetries < maxVerifyRetries) {
+          verifyRetries++;
+          retries++;
+          await sleep(300);
+          await this.gate(sessionId, opts.signal);
+          continue;
+        }
+        break;
       }
       res = res!;
 
@@ -416,25 +439,36 @@ export class ComputerController {
         } else if (res.code === "stopped") {
           // status was already set by the command that raised the flag
         }
-        result = fail(res.error, { retries: attempt, beforeScreenshotRef: beforeRef, output: { code: res.code } });
+        result = fail(res.error, { retries, beforeScreenshotRef: beforeRef, output: { code: res.code } });
       } else {
         const out = (res.result ?? {}) as Record<string, unknown>;
+        const v = verificationOf(out);
         let afterRef: string | undefined;
         const wantAfter = opts.captureAfter ?? (isInput && action.type !== "move");
         if (wantAfter) {
           await sleep(this.o.settleMs);
           afterRef = (await this.screenshotFile())?.path;
         }
-        result = {
-          actionId,
-          ok: true,
-          verified: out.verified === true,
-          retries: attempt,
-          beforeScreenshotRef: beforeRef,
-          afterScreenshotRef: afterRef,
-          output: out,
-          durationMs: Date.now() - started,
-        };
+        if (v?.status === "failed") {
+          const tried = retries > 0 ? ` (tried ${retries + 1} times)` : "";
+          result = fail(`${summary} didn't take effect${tried}: ${v.note}`, {
+            retries,
+            beforeScreenshotRef: beforeRef,
+            afterScreenshotRef: afterRef,
+            output: { ...out, code: "verify_failed" },
+          });
+        } else {
+          result = {
+            actionId,
+            ok: true,
+            verified: v ? v.status === "passed" : out.verified === true,
+            retries,
+            beforeScreenshotRef: beforeRef,
+            afterScreenshotRef: afterRef,
+            output: out,
+            durationMs: Date.now() - started,
+          };
+        }
       }
     } catch (e) {
       result = fail((e as Error).message, { output: { code: (e as ControlInterruptedError).code ?? "error" } });

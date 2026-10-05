@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 const stopFlag = process.argv[2];
 let notFoundLeft = 1;
+let lostLeft = 1;
+const vfy = (status, retrySafe, note = "") => ({ status, checks: [], changed: [], note, retrySafe });
 let lastInput = 1000, lastInject = 0;
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 out({ id: "_ready", ok: true, result: { ready: true } });
@@ -22,6 +24,11 @@ rl.on("line", async (line) => {
     if (a.type === "hotkey" && a.keys?.[0] === "hang") return; // never answers
     if (a.type === "type" && a.text === "slow") { await new Promise((r) => setTimeout(r, 400)); if (existsSync(stopFlag)) return out({ id: req.id, ok: false, error: "Stopped by user", code: "stopped" }); }
     lastInject = lastInput = lastInput + 1;
+    if (a.type === "type" && a.text === "lost" && lostLeft-- > 0) return out({ id: req.id, ok: true, result: { method: "keys", verified: false, verification: vfy("failed", true, "field text unchanged") } });
+    if (a.type === "type" && a.text === "lost") return out({ id: req.id, ok: true, result: { method: "keys", verified: true, verification: vfy("passed", false) } });
+    if (a.type === "type" && a.text === "never") return out({ id: req.id, ok: true, result: { method: "keys", verified: false, verification: vfy("failed", true, "the field's text didn't change") } });
+    if (a.type === "rightClick") return out({ id: req.id, ok: true, result: { method: "mouse", verified: false, verification: vfy("failed", false, "menu didn't open") } });
+    if (a.type === "hotkey" && a.keys?.[0] === "ctrl") return out({ id: req.id, ok: true, result: { method: "keys", verified: false, verification: vfy("unknown", false, "no visible change") } });
     return out({ id: req.id, ok: true, result: { method: "uia_invoke", verified: a.type === "focusWindow" } });
   }
   out({ id: req.id, ok: false, error: "unknown", code: "error" });
