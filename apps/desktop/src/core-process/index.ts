@@ -250,7 +250,12 @@ let unwatchFrames: (() => void) | null = null;
 
 if (isWindows) {
   try {
-    windowsControl = createWindowsControl({ bus: orchestrator.bus });
+    windowsControl = createWindowsControl({
+      bus: orchestrator.bus,
+      hostOptions: process.env.CALYPSO_PS_HOST_SCRIPT
+        ? { scriptPath: process.env.CALYPSO_PS_HOST_SCRIPT }
+        : undefined,
+    });
     for (const tool of windowsControl.tools) {
       orchestrator.registerTool(tool);
     }

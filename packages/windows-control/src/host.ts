@@ -52,11 +52,16 @@ export function defaultHostScriptPath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const unpack = (p: string) =>
     p.replace(`app.asar${"\\"}`, `app.asar.unpacked${"\\"}`).replace("app.asar/", "app.asar.unpacked/");
+  const resourcesPath =
+    (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ??
+    process.env.ELECTRON_RESOURCES_PATH ??
+    // utilityProcess often lacks resourcesPath; Calypso.exe lives next to resources/
+    join(dirname(process.execPath), "resources");
   const candidates = [
     process.env.CALYPSO_PS_HOST_SCRIPT,
-    typeof (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath === "string"
-      ? join((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath!, "windows-control-host", "calypso-host.ps1")
-      : undefined,
+    join(resourcesPath, "windows-control-host", "calypso-host.ps1"),
+    // electron.exe layout (dev): resources are under the app path
+    join(dirname(process.execPath), "..", "resources", "windows-control-host", "calypso-host.ps1"),
     join(here, "..", "host", "calypso-host.ps1"),
   ].filter((p): p is string => !!p);
   for (const raw of candidates) {
