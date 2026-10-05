@@ -4,15 +4,23 @@ import type {
   ChatCompletionResponse,
   ModelProvider,
 } from "@calypso/shared";
+import { DEFAULT_NUM_CTX } from "../inference/shared-server.js";
 
 /**
  * Generic OpenAI-compatible HTTP provider (Ollama, llama.cpp server, cloud).
- * Streaming uses SSE over fetch.
+ * Streaming uses SSE over fetch for /v1 backends.
  *
  * keep_alive: Ollama's OpenAI-compatible `/v1` endpoints do NOT accept
  * `keep_alive`. To keep a model resident in VRAM, use OllamaAdmin native
  * `/api/generate` (see preloadPrimaryModel + SharedInferenceServer
  * refreshKeepAliveAfterInference). Do not add keep_alive to chat payloads here.
+ *
+ * num_ctx / Ollama chat path: `/v1` silently ignores `options.num_ctx` (and
+ * top-level num_ctx on many builds), which would drop a preload'd 8k KV cache
+ * back to ~4k on the first reply. For id "ollama" we therefore call native
+ * `/api/chat` with `options.num_ctx = DEFAULT_NUM_CTX` (8192) so chat matches
+ * preload VRAM — 8k on RTX 4060 8GB with resident qwen3:8b; vision
+ * qwen2.5vl:3b loads on demand and must still fit after unload.
  */
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly id: string;
@@ -32,26 +40,60 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.apiKey = opts.apiKey;
   }
 
+  /** Native Ollama host (strip trailing /v1). */
+  private ollamaNativeBase(): string {
+    return this.baseUrl.replace(/\/v1$/i, "");
+  }
 
-  /** Drop undefined keys so providers that reject unknown nulls stay happy. */
+  /**
+   * OpenAI-compatible /v1 body (llama.cpp, cloud, and unused Ollama /v1 fallback).
+   * Drop undefined keys so providers that reject unknown nulls stay happy.
+   */
   private body(request: ChatCompletionRequest, stream: boolean): string {
     const payload: Record<string, unknown> = { ...request, stream };
     if (this.id === "ollama") {
-      // Ollama's /v1 endpoint ignores `think`; qwen3 thinks by default and spends
-      // hundreds of hidden tokens per reply (≈3s vs ≈12s measured on the 4060).
-      // reasoning_effort "none" is what actually turns thinking off there.
+      // Kept for any residual /v1 callers: reasoning_effort turns thinking off;
+      // options.num_ctx is ignored by /v1 on current Ollama — prefer native /api/chat.
       if (request.think === true) {
         delete payload.reasoning_effort;
       } else {
         payload.reasoning_effort = "none";
       }
       delete payload.think;
+      const prevOpts =
+        payload.options && typeof payload.options === "object"
+          ? (payload.options as Record<string, unknown>)
+          : {};
+      payload.options = { ...prevOpts, num_ctx: DEFAULT_NUM_CTX };
     } else {
       delete payload.think;
     }
     for (const key of Object.keys(payload)) {
       if (payload[key] === undefined) delete payload[key];
     }
+    return JSON.stringify(payload);
+  }
+
+  /**
+   * Native Ollama /api/chat body — honors options.num_ctx and `think`.
+   * Do NOT turn thinking back on for normal chat (think only when request.think).
+   */
+  private ollamaNativeBody(request: ChatCompletionRequest, stream: boolean): string {
+    const payload: Record<string, unknown> = {
+      model: request.model,
+      messages: request.messages,
+      stream,
+      options: { num_ctx: DEFAULT_NUM_CTX },
+      // Native API respects `think`; false keeps qwen3 from burning hidden tokens.
+      think: request.think === true,
+    };
+    if (request.temperature !== undefined) payload.temperature = request.temperature;
+    if (request.max_tokens !== undefined) {
+      // Native uses options.num_predict for generation length.
+      (payload.options as Record<string, unknown>).num_predict = request.max_tokens;
+    }
+    if (request.stop !== undefined) payload.stop = request.stop;
+    if (request.tools !== undefined) payload.tools = request.tools;
     return JSON.stringify(payload);
   }
 
@@ -69,6 +111,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
   }
 
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+    if (this.id === "ollama") {
+      return this.ollamaComplete(request);
+    }
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(),
@@ -80,10 +125,64 @@ export class OpenAICompatibleProvider implements ModelProvider {
     return (await res.json()) as ChatCompletionResponse;
   }
 
+  private async ollamaComplete(
+    request: ChatCompletionRequest
+  ): Promise<ChatCompletionResponse> {
+    const res = await fetch(`${this.ollamaNativeBase()}/api/chat`, {
+      method: "POST",
+      headers: this.headers(),
+      body: this.ollamaNativeBody(request, false),
+    });
+    if (!res.ok) {
+      throw new Error(`ModelProvider ${this.id} complete failed: ${res.status}`);
+    }
+    const data = (await res.json()) as {
+      model?: string;
+      message?: {
+        role?: string;
+        content?: string | null;
+        tool_calls?: unknown[];
+      };
+      done_reason?: string;
+      prompt_eval_count?: number;
+      eval_count?: number;
+    };
+    const message = {
+      role: (data.message?.role as "assistant") ?? "assistant",
+      content: data.message?.content ?? "",
+      ...(data.message?.tool_calls
+        ? { tool_calls: data.message.tool_calls }
+        : {}),
+    };
+    return {
+      id: `ollama-${Date.now()}`,
+      choices: [
+        {
+          index: 0,
+          message: message as ChatCompletionResponse["choices"][0]["message"],
+          finish_reason: data.done_reason ?? "stop",
+        },
+      ],
+      usage:
+        data.prompt_eval_count !== undefined || data.eval_count !== undefined
+          ? {
+              prompt_tokens: data.prompt_eval_count ?? 0,
+              completion_tokens: data.eval_count ?? 0,
+              total_tokens:
+                (data.prompt_eval_count ?? 0) + (data.eval_count ?? 0),
+            }
+          : undefined,
+    };
+  }
+
   async *stream(
     request: ChatCompletionRequest,
     signal?: AbortSignal
   ): AsyncIterable<ChatCompletionChunk> {
+    if (this.id === "ollama") {
+      yield* this.ollamaStream(request, signal);
+      return;
+    }
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(),
@@ -109,6 +208,65 @@ export class OpenAICompatibleProvider implements ModelProvider {
         if (payload === "[DONE]") return;
         try {
           yield JSON.parse(payload) as ChatCompletionChunk;
+        } catch {
+          /* skip malformed */
+        }
+      }
+    }
+  }
+
+  /** Native Ollama NDJSON stream → OpenAI-shaped chunks. */
+  private async *ollamaStream(
+    request: ChatCompletionRequest,
+    signal?: AbortSignal
+  ): AsyncIterable<ChatCompletionChunk> {
+    const res = await fetch(`${this.ollamaNativeBase()}/api/chat`, {
+      method: "POST",
+      headers: this.headers(),
+      body: this.ollamaNativeBody(request, true),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`ModelProvider ${this.id} stream failed: ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const id = `ollama-${Date.now()}`;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const evt = JSON.parse(trimmed) as {
+            message?: {
+              role?: string;
+              content?: string | null;
+              tool_calls?: unknown[];
+            };
+            done?: boolean;
+            done_reason?: string | null;
+          };
+          const delta: ChatCompletionChunk["choices"][0]["delta"] = {};
+          if (evt.message?.role) delta.role = evt.message.role;
+          if (evt.message?.content) delta.content = evt.message.content;
+          if (evt.message?.tool_calls) delta.tool_calls = evt.message.tool_calls;
+          yield {
+            id,
+            choices: [
+              {
+                index: 0,
+                delta,
+                finish_reason: evt.done ? (evt.done_reason ?? "stop") : null,
+              },
+            ],
+          };
+          if (evt.done) return;
         } catch {
           /* skip malformed */
         }

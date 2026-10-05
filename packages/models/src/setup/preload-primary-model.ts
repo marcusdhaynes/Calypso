@@ -8,6 +8,9 @@
  * keep_alive: Ollama's OpenAI-compatible /v1 chat API does NOT accept keep_alive.
  * Residence is maintained by this native /api/generate warmup (and optional
  * fire-and-forget refresh after SharedInferenceServer complete/stream).
+ *
+ * num_ctx: OllamaAdmin.warmup pins DEFAULT_NUM_CTX (8192) so the resident
+ * KV cache matches OpenAICompatibleProvider chat requests.
  */
 import type {
   InferenceRuntimeProgress,

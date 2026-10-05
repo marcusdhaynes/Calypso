@@ -35,6 +35,7 @@ export {
   SharedInferenceServer,
   OllamaAdmin,
   createSharedInferenceServer,
+  DEFAULT_NUM_CTX,
 } from "./inference/shared-server.js";
 export type {
   SharedInferenceServerOptions,

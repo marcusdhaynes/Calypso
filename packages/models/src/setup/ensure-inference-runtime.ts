@@ -31,6 +31,7 @@ import type {
 } from "@calypso/shared";
 import { probeHardware, type HardwareProfile } from "../benchmark.js";
 import { planFirstRunInference, type FirstRunInferencePlan } from "./first-run.js";
+import { DEFAULT_NUM_CTX } from "../inference/shared-server.js";
 
 export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
@@ -351,7 +352,13 @@ async function startOllamaServer(
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, OLLAMA_HOST: host },
+      env: {
+        ...process.env,
+        OLLAMA_HOST: host,
+        // Align default context with DEFAULT_NUM_CTX when Calypso starts serve.
+        OLLAMA_CONTEXT_LENGTH:
+          process.env.OLLAMA_CONTEXT_LENGTH ?? String(DEFAULT_NUM_CTX),
+      },
     });
     child.on("error", () => undefined);
     child.unref();

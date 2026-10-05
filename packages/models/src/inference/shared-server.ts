@@ -46,11 +46,21 @@ export interface InferenceAdmin {
   unload?(model: string): Promise<void>;
 }
 
+/**
+ * Default Ollama context window (tokens) for the primary chat / preload path.
+ * 8k on RTX 4060 8GB with resident qwen3:8b; vision (qwen2.5vl:3b) loads on
+ * demand via hard-swap and must still fit after the 8B is unloaded.
+ * Keep provider /v1 and preload /api/generate on the same value so VRAM stays consistent.
+ */
+export const DEFAULT_NUM_CTX = 8192;
+
 export interface OllamaAdminOptions {
   /** Native Ollama base (not /v1). Default http://127.0.0.1:11434 */
   baseUrl?: string;
   /** keep_alive for warmup generate; default "10m". Use "0" to unload. Prefer "24h" for the resident primary. */
   keepAlive?: string;
+  /** Context tokens for warmup load. Default DEFAULT_NUM_CTX (8192). */
+  numCtx?: number;
 }
 
 /**
@@ -61,10 +71,12 @@ export interface OllamaAdminOptions {
 export class OllamaAdmin implements InferenceAdmin {
   private baseUrl: string;
   private keepAlive: string;
+  private numCtx: number;
 
   constructor(opts: OllamaAdminOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? "http://127.0.0.1:11434").replace(/\/$/, "");
     this.keepAlive = opts.keepAlive ?? "10m";
+    this.numCtx = opts.numCtx ?? DEFAULT_NUM_CTX;
   }
 
   async warmup(model: string): Promise<void> {
@@ -75,6 +87,7 @@ export class OllamaAdmin implements InferenceAdmin {
         model,
         prompt: "",
         keep_alive: this.keepAlive,
+        options: { num_ctx: this.numCtx },
       }),
     });
     if (!res.ok) {
