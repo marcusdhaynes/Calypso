@@ -779,6 +779,61 @@ export interface BrowserRuntimeStatus {
   executablePath: string;
 }
 
+// Inference runtime (Angen) — Ollama detect/start + first-run model pulls
+// Mirrors the browser runtime progress shape so the first-run UI can share code.
+// ---------------------------------------------------------------------------
+
+export type InferenceRuntimePhase =
+  | "checking"
+  | "starting"
+  | "install"
+  | "pulling"
+  | "ready"
+  | "error";
+
+export interface InferenceRuntimeProgress {
+  phase: InferenceRuntimePhase;
+  /** 0–100 overall (weighted across all planned pulls) when known. */
+  percent?: number;
+  message: string;
+  /** Model currently being pulled, when phase === "pulling". */
+  model?: string;
+}
+
+/**
+ * notInstalled — Ollama server unreachable and no binary found (UI should open installUrl).
+ * installing   — Ollama binary found and being started / installer in progress.
+ * needsModels  — Ollama up, but some planned models are not pulled yet.
+ * pulling      — model pulls in flight.
+ * ready        — Ollama up and all planned models present.
+ * error        — Ollama present but unusable, or a pull failed.
+ */
+export type InferenceRuntimeState =
+  | "notInstalled"
+  | "installing"
+  | "needsModels"
+  | "pulling"
+  | "ready"
+  | "error";
+
+export interface InferenceRuntimeStatus {
+  state: InferenceRuntimeState;
+  /** Native Ollama base URL (not /v1). */
+  baseUrl: string;
+  ollamaReachable: boolean;
+  /** Ollama binary path when found on disk (may be present while server is down). */
+  binaryPath?: string;
+  /** Ollama server version from /api/version when reachable. */
+  version?: string;
+  /** Planned local models (chat + embedding) for this hardware. */
+  requiredModels: string[];
+  presentModels: string[];
+  missingModels: string[];
+  /** Download page / installer URL for the current platform when notInstalled. */
+  installUrl?: string;
+  message: string;
+}
+
 // Event bus
 // ---------------------------------------------------------------------------
 
@@ -834,6 +889,16 @@ export type CalypsoEvent =
   | {
       type: "browser.runtime.ready";
       status: BrowserRuntimeStatus;
+      at: number;
+    }
+  | {
+      type: "models.runtime.progress";
+      progress: InferenceRuntimeProgress;
+      at: number;
+    }
+  | {
+      type: "models.runtime.ready";
+      status: InferenceRuntimeStatus;
       at: number;
     }
   | { type: "system.error"; message: string; cause?: string; at: number };
@@ -923,6 +988,8 @@ export type CoreRequest =
   | { id: string; method: "getFirstRunPlan"; params?: undefined }
   | { id: string; method: "ensureBrowserRuntime"; params?: undefined }
   | { id: string; method: "getBrowserRuntimeStatus"; params?: undefined }
+  | { id: string; method: "ensureInferenceRuntime"; params?: undefined }
+  | { id: string; method: "getInferenceRuntimeStatus"; params?: undefined }
   | { id: string; method: "listWorkers"; params?: undefined }
   | { id: string; method: "createWorker"; params: { worker: WorkerInput } }
   | { id: string; method: "updateWorker"; params: { worker: Worker } }
@@ -1036,6 +1103,8 @@ export interface CalypsoIpcApi {
   getFirstRunPlan(): Promise<FirstRunPlan>;
   ensureBrowserRuntime(): Promise<BrowserRuntimeStatus>;
   getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus>;
+  ensureInferenceRuntime(): Promise<InferenceRuntimeStatus>;
+  getInferenceRuntimeStatus(): Promise<InferenceRuntimeStatus>;
   getModelStatus(): Promise<ModelStatus>;
   getAppInfo(): Promise<AppInfo>;
   /** Tray menu actions (new-command, etc.). */

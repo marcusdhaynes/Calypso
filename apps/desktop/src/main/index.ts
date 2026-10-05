@@ -266,6 +266,8 @@ function registerIpc(): void {
     "getFirstRunPlan",
     "ensureBrowserRuntime",
     "getBrowserRuntimeStatus",
+    "ensureInferenceRuntime",
+    "getInferenceRuntimeStatus",
     "listWorkers",
     "createWorker",
     "updateWorker",

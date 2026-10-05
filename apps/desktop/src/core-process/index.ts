@@ -19,6 +19,8 @@ import {
   probeHardware,
   recommendTaskClassRoutes,
   buildCompletionRequest,
+  ensureInferenceRuntime,
+  getInferenceRuntimeStatus,
   type FirstRunInferencePlan,
 } from "@calypso/models";
 import type {
@@ -196,6 +198,18 @@ async function ensureBrowserRuntimeReady() {
     status,
     at: Date.now(),
   });
+  return status;
+}
+
+/**
+ * Angen: local inference first-run (Ollama detect/start + planned model pulls).
+ * Publishes models.runtime.progress / models.runtime.ready on the bus, which is
+ * forwarded to the renderer as calypso:event (same path as browser.runtime.*).
+ * Theriz owns the UI; this is not auto-run at startup (pulls are multi-GB).
+ */
+async function ensureInferenceRuntimeReady() {
+  const status = await ensureInferenceRuntime({ bus: orchestrator.bus });
+  if (status.state === "ready") void refreshModelStatus();
   return status;
 }
 
@@ -494,6 +508,14 @@ async function handle(req: CoreRequest): Promise<void> {
           ok: true,
           result: await browserControl.getRuntimeStatus(),
         });
+        return;
+      }
+      case "ensureInferenceRuntime": {
+        respond({ id: req.id, ok: true, result: await ensureInferenceRuntimeReady() });
+        return;
+      }
+      case "getInferenceRuntimeStatus": {
+        respond({ id: req.id, ok: true, result: await getInferenceRuntimeStatus() });
         return;
       }
       case "listWorkers":

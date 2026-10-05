@@ -41,3 +41,22 @@ export type {
   FirstRunInferencePlan,
   ModelDownloadPlan,
 } from "./setup/first-run.js";
+export {
+  ensureInferenceRuntime,
+  getInferenceRuntimeStatus,
+  findOllamaBinary,
+  ollamaInstallUrl,
+  requiredModelsForPlan,
+  DEFAULT_OLLAMA_BASE_URL,
+} from "./setup/ensure-inference-runtime.js";
+export type {
+  InferenceRuntimeOptions,
+  InferenceRuntimeStatusOptions,
+  InferenceRuntimeEventSink,
+} from "./setup/ensure-inference-runtime.js";
+export type {
+  InferenceRuntimeProgress,
+  InferenceRuntimePhase,
+  InferenceRuntimeState,
+  InferenceRuntimeStatus,
+} from "@calypso/shared";
