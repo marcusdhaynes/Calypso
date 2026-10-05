@@ -1,14 +1,24 @@
-import type { BrowserRuntimeProgress } from "@calypso/shared";
 import { colors, motion, radii, space } from "../theme/tokens.js";
+
+export interface RuntimeProgress {
+  phase: string;
+  percent?: number;
+  message: string;
+}
 
 export interface RuntimeProgressBannerProps {
   title?: string;
-  progress: BrowserRuntimeProgress;
+  progress: RuntimeProgress;
   onDismiss?: () => void;
+  /** Stack offset when multiple banners show (0 = bottom). */
+  stackIndex?: number;
 }
 
-const phaseLabel: Record<BrowserRuntimeProgress["phase"], string> = {
+const PHASE_LABELS: Record<string, string> = {
   checking: "Checking",
+  starting: "Starting",
+  install: "Install",
+  pulling: "Pulling",
   downloading: "Downloading",
   extracting: "Extracting",
   ready: "Ready",
@@ -16,13 +26,15 @@ const phaseLabel: Record<BrowserRuntimeProgress["phase"], string> = {
 };
 
 export function RuntimeProgressBanner({
-  title = "Browser runtime",
+  title = "Runtime",
   progress,
   onDismiss,
+  stackIndex = 0,
 }: RuntimeProgressBannerProps) {
   const pct = typeof progress.percent === "number" ? Math.max(0, Math.min(100, progress.percent)) : null;
   const isError = progress.phase === "error";
   const isReady = progress.phase === "ready";
+  const label = PHASE_LABELS[progress.phase] ?? progress.phase;
 
   return (
     <div
@@ -31,7 +43,7 @@ export function RuntimeProgressBanner({
       style={{
         position: "fixed",
         left: "50%",
-        bottom: space[12],
+        bottom: 48 + stackIndex * 96,
         transform: "translateX(-50%)",
         zIndex: 350,
         width: "min(420px, calc(100vw - 32px))",
@@ -56,7 +68,7 @@ export function RuntimeProgressBanner({
               color: isError ? colors.danger : isReady ? colors.success : colors.accent,
             }}
           >
-            {title} · {phaseLabel[progress.phase]}
+            {title} · {label}
           </div>
           <div style={{ marginTop: 4, fontSize: 13.5, color: colors.textSecondary, lineHeight: 1.4 }}>
             {progress.message}

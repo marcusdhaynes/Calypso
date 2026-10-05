@@ -23,10 +23,10 @@ export { ChatComposer } from "./ChatComposer.js";
 export type { ChatComposerProps } from "./ChatComposer.js";
 
 export { FirstRunWizard } from "./FirstRunWizard.js";
-export type { FirstRunWizardProps, FirstRunPlanView, FirstRunModelRow } from "./FirstRunWizard.js";
+export type { FirstRunWizardProps, FirstRunPlanView, FirstRunModelRow, FirstRunConsentOptions } from "./FirstRunWizard.js";
 
 export { PermissionToast } from "./PermissionToast.js";
 export type { PermissionToastProps } from "./PermissionToast.js";
 
 export { RuntimeProgressBanner } from "./RuntimeProgressBanner.js";
-export type { RuntimeProgressBannerProps } from "./RuntimeProgressBanner.js";
+export type { RuntimeProgressBannerProps, RuntimeProgress } from "./RuntimeProgressBanner.js";

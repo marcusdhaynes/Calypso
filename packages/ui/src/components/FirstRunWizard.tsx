@@ -3,7 +3,7 @@
  * Plan data comes from Angen's `planFirstRunInference` via main/core IPC —
  * do not import @calypso/models in the renderer (Node APIs).
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "./Button.js";
 import { colors, radii, shadows, space, typography } from "../theme/tokens.js";
 
@@ -26,25 +26,63 @@ export interface FirstRunPlanView {
   visionSwapPolicy: string;
 }
 
-export interface FirstRunWizardProps {
-  plan: FirstRunPlanView;
-  onComplete: (opts: { createDefaultWorker: boolean }) => void;
-  onSkip?: () => void;
+export interface FirstRunConsentOptions {
+  createDefaultWorker: boolean;
+  /** Call ensureBrowserRuntime when true. */
+  installBrowser: boolean;
+  /** Call ensureInferenceRuntime when true (Ollama must be installed). */
+  installModels: boolean;
 }
 
-type Step = "welcome" | "hardware" | "models" | "permissions" | "worker" | "done";
+export interface FirstRunWizardProps {
+  plan: FirstRunPlanView;
+  /** Chromium estimate from getBrowserRuntimeStatus (default 300). */
+  chromiumDownloadMb?: number;
+  /** When Ollama is missing, show install URL and block model pulls until installed. */
+  ollama?: {
+    installed: boolean;
+    installUrl?: string;
+    message?: string;
+  };
+  onComplete: (opts: FirstRunConsentOptions) => void;
+  onSkip?: () => void;
+  /** Open Ollama download page (desktop shell). */
+  onOpenOllamaInstall?: (url: string) => void;
+}
 
-const STEPS: Step[] = ["welcome", "hardware", "models", "permissions", "worker", "done"];
+type Step = "welcome" | "hardware" | "models" | "downloads" | "permissions" | "worker" | "done";
+
+const STEPS: Step[] = ["welcome", "hardware", "models", "downloads", "permissions", "worker", "done"];
 
 function formatMb(mb: number): string {
   if (mb >= 1000) return `${(mb / 1000).toFixed(1)} GB`;
   return `${Math.round(mb)} MB`;
 }
 
-export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps) {
+export function FirstRunWizard({
+  plan,
+  chromiumDownloadMb = 300,
+  ollama,
+  onComplete,
+  onSkip,
+  onOpenOllamaInstall,
+}: FirstRunWizardProps) {
   const [step, setStep] = useState<Step>("welcome");
   const [createWorker, setCreateWorker] = useState(true);
+  const [installBrowser, setInstallBrowser] = useState(true);
+  const [installModels, setInstallModels] = useState(true);
   const idx = STEPS.indexOf(step);
+
+  const modelsMb = useMemo(() => {
+    const models = plan.modelsToDownload.reduce((sum, m) => sum + m.estimatedDownloadMb, 0);
+    return models + plan.embedding.estimatedDownloadMb;
+  }, [plan]);
+
+  const ollamaReady = ollama?.installed !== false;
+  const effectiveInstallModels = ollamaReady && installModels;
+
+  const totalMb =
+    (installBrowser ? chromiumDownloadMb : 0) + (effectiveInstallModels ? modelsMb : 0);
 
   const next = () => {
     const n = STEPS[idx + 1];
@@ -81,13 +119,29 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
         }}
       >
         <header>
-          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: colors.accent }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: colors.accent,
+            }}
+          >
             Setup · {idx + 1}/{STEPS.length}
           </div>
-          <h1 style={{ margin: `${space[4]} 0 0`, fontSize: typography.size["2xl"], fontWeight: 700, letterSpacing: "-0.02em" }}>
+          <h1
+            style={{
+              margin: `${space[4]} 0 0`,
+              fontSize: typography.size["2xl"],
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+            }}
+          >
             {step === "welcome" && "Welcome to Calypso"}
             {step === "hardware" && "Your hardware"}
             {step === "models" && "Local models"}
+            {step === "downloads" && "Downloads"}
             {step === "permissions" && "Permissions"}
             {step === "worker" && "First worker"}
             {step === "done" && "You're ready"}
@@ -131,16 +185,88 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
                   }}
                 >
                   <div>
-                    <div style={{ fontWeight: 600, color: colors.textPrimary, fontFamily: typography.fontMono, fontSize: 13 }}>
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        color: colors.textPrimary,
+                        fontFamily: typography.fontMono,
+                        fontSize: 13,
+                      }}
+                    >
                       {m.model}
                     </div>
                     <div style={{ fontSize: 12, color: colors.textMuted }}>{m.purpose}</div>
                   </div>
-                  <div style={{ fontSize: 12, color: colors.accent, whiteSpace: "nowrap" }}>{formatMb(m.estimatedDownloadMb)}</div>
+                  <div style={{ fontSize: 12, color: colors.accent, whiteSpace: "nowrap" }}>
+                    {formatMb(m.estimatedDownloadMb)}
+                  </div>
                 </div>
               ))}
               <div style={{ fontSize: 12, color: colors.textMuted }}>
-                Embeddings: {plan.embedding.model} ({formatMb(plan.embedding.estimatedDownloadMb)}, CPU) — {plan.embedding.notes}
+                Embeddings: {plan.embedding.model} ({formatMb(plan.embedding.estimatedDownloadMb)}, CPU) —{" "}
+                {plan.embedding.notes}
+              </div>
+            </div>
+          )}
+          {step === "downloads" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: space[6] }}>
+              <p style={{ margin: 0, fontSize: 13 }}>
+                Nothing downloads until you choose. Skip any part — you can retry later from Settings.
+              </p>
+
+              {!ollamaReady ? (
+                <div
+                  style={{
+                    padding: space[6],
+                    borderRadius: radii.lg,
+                    background: "rgba(240, 194, 90, 0.1)",
+                    border: "1px solid rgba(240, 194, 90, 0.28)",
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: colors.warning, marginBottom: 4 }}>Ollama not installed</div>
+                  {ollama?.message ?? "Install Ollama before pulling local models. Calypso will not install it silently."}
+                  {ollama?.installUrl ? (
+                    <div style={{ marginTop: space[5] }}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onOpenOllamaInstall?.(ollama.installUrl!)}
+                      >
+                        Open Ollama download
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <ConsentRow
+                title="Local models (Ollama)"
+                detail={`${plan.modelsToDownload.length + 1} weights · ${formatMb(modelsMb)}`}
+                checked={effectiveInstallModels}
+                disabled={!ollamaReady}
+                onChange={setInstallModels}
+              />
+              <ConsentRow
+                title="Browser runtime (Chromium)"
+                detail={`Playwright Chromium · ${formatMb(chromiumDownloadMb)}`}
+                checked={installBrowser}
+                onChange={setInstallBrowser}
+              />
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  paddingTop: space[4],
+                  borderTop: `1px solid ${colors.border}`,
+                  fontWeight: 600,
+                  color: colors.textPrimary,
+                }}
+              >
+                <span>Total if you continue</span>
+                <span style={{ color: colors.accent }}>{formatMb(totalMb)}</span>
               </div>
             </div>
           )}
@@ -148,7 +274,7 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               <li>Computer control can pause, stop, or take over anytime.</li>
               <li>Workers start on Ask for destructive actions.</li>
-              <li>Browser runtime (Chromium) downloads on first use into app data — not bundled in Calypso.exe.</li>
+              <li>Downloads go into app data — not bundled in Calypso.exe.</li>
               <li>Microphone is optional — enable later for voice.</li>
               <li>Credentials stay in the OS credential store, never in logs.</li>
             </ul>
@@ -157,13 +283,22 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
             <div>
               <p style={{ marginTop: 0 }}>Create a default Assistant worker you can talk to immediately.</p>
               <label style={{ display: "flex", alignItems: "center", gap: space[5], cursor: "pointer" }}>
-                <input type="checkbox" checked={createWorker} onChange={(e) => setCreateWorker(e.target.checked)} />
-                Create “Assistant” (trusted for read, ask for write)
+                <input
+                  type="checkbox"
+                  checked={createWorker}
+                  onChange={(e) => setCreateWorker(e.target.checked)}
+                />
+                Create “Assistant” (ask before write / system actions)
               </label>
             </div>
           )}
           {step === "done" && (
-            <p style={{ margin: 0 }}>Calypso is ready. You can change models, voice, and permissions anytime in Settings.</p>
+            <p style={{ margin: 0 }}>
+              {totalMb > 0
+                ? `Calypso will start ${formatMb(totalMb)} of consented downloads after you enter.`
+                : "No downloads selected — you can install runtimes later from Settings."}{" "}
+              You can change models, voice, and permissions anytime.
+            </p>
           )}
         </div>
 
@@ -182,12 +317,33 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
             )}
           </div>
           <div style={{ display: "flex", gap: space[3] }}>
+            {step === "downloads" ? (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setInstallBrowser(false);
+                  setInstallModels(false);
+                  next();
+                }}
+              >
+                Skip all downloads
+              </Button>
+            ) : null}
             {step !== "done" ? (
               <Button variant="primary" onClick={next}>
                 Continue
               </Button>
             ) : (
-              <Button variant="primary" onClick={() => onComplete({ createDefaultWorker: createWorker })}>
+              <Button
+                variant="primary"
+                onClick={() =>
+                  onComplete({
+                    createDefaultWorker: createWorker,
+                    installBrowser,
+                    installModels: effectiveInstallModels,
+                  })
+                }
+              >
                 Enter Calypso
               </Button>
             )}
@@ -195,6 +351,48 @@ export function FirstRunWizard({ plan, onComplete, onSkip }: FirstRunWizardProps
         </footer>
       </section>
     </div>
+  );
+}
+
+function ConsentRow({
+  title,
+  detail,
+  checked,
+  disabled,
+  onChange,
+}: {
+  title: string;
+  detail: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: space[5],
+        padding: space[6],
+        borderRadius: radii.lg,
+        background: colors.raised,
+        border: `1px solid ${colors.border}`,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ marginTop: 3 }}
+      />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontWeight: 600, color: colors.textPrimary }}>{title}</span>
+        <span style={{ display: "block", fontSize: 12.5, color: colors.textMuted }}>{detail}</span>
+      </span>
+    </label>
   );
 }
 

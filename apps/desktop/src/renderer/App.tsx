@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   Avatar,
@@ -12,6 +12,7 @@ import {
   WorkerCard,
   colors,
   typography,
+  type FirstRunConsentOptions,
   type FirstRunPlanView,
   type SidebarNavId,
 } from "@calypso/ui";
@@ -98,6 +99,11 @@ export function App() {
   const [controlFrame, setControlFrame] = useState<ControlFrame | null>(null);
   const watchingFrames = useRef(false);
   const [browserRuntimeProgress, setBrowserRuntimeProgress] = useState<BrowserRuntimeProgress | null>(null);
+  const [inferenceRuntimeProgress, setInferenceRuntimeProgress] = useState<InferenceRuntimeProgress | null>(null);
+  const [chromiumDownloadMb, setChromiumDownloadMb] = useState(300);
+  const [ollamaInfo, setOllamaInfo] = useState<{ installed: boolean; installUrl?: string; message?: string }>({
+    installed: true,
+  });
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const streamingIds = useRef(new Set<string>());
   const [lines, setLines] = useState<ChatLine[]>([
@@ -119,6 +125,18 @@ export function App() {
         .then((p) => setPlan(planToView(p)))
         .catch(() => undefined);
     }
+
+    void api.getBrowserRuntimeStatus?.().then((s) => {
+      if (typeof s?.estimatedDownloadMb === "number") setChromiumDownloadMb(s.estimatedDownloadMb);
+    }).catch(() => undefined);
+
+    void api.getInferenceRuntimeStatus?.().then((s: InferenceRuntimeStatus) => {
+      setOllamaInfo({
+        installed: s.state !== "notInstalled",
+        installUrl: s.installUrl,
+        message: s.message,
+      });
+    }).catch(() => undefined);
 
     void api.getModelStatus?.().then(setModelStatus).catch(() => undefined);
     void api.getAppInfo?.().then((info) => {
@@ -188,6 +206,25 @@ export function App() {
           message: event.status.installed
             ? "Chromium is ready for browsing."
             : "Browser runtime reported ready.",
+        });
+      }
+      if (event.type === "models.runtime.progress") {
+        setInferenceRuntimeProgress(event.progress);
+        if (event.progress.phase === "install") {
+          setOllamaInfo((cur) => ({ ...cur, installed: false, message: event.progress.message }));
+        }
+      }
+      if (event.type === "models.runtime.ready") {
+        const s = event.status;
+        setOllamaInfo({
+          installed: s.state !== "notInstalled",
+          installUrl: s.installUrl,
+          message: s.message,
+        });
+        setInferenceRuntimeProgress({
+          phase: s.state === "ready" ? "ready" : s.state === "notInstalled" ? "install" : s.state === "error" ? "error" : "ready",
+          percent: s.state === "ready" ? 100 : undefined,
+          message: s.message,
         });
       }
     });
@@ -277,7 +314,7 @@ export function App() {
   );
 
   const finishSetup = useCallback(
-    async (opts: { createDefaultWorker: boolean }) => {
+    async (opts: FirstRunConsentOptions) => {
       try {
         localStorage.setItem(SETUP_KEY, "1");
       } catch {
@@ -286,7 +323,7 @@ export function App() {
       setSetupDone(true);
 
       const api = window.calypso;
-      if (api?.ensureBrowserRuntime) {
+      if (opts.installBrowser && api?.ensureBrowserRuntime) {
         setBrowserRuntimeProgress({
           phase: "checking",
           message: "Preparing browser runtime…",
@@ -295,6 +332,30 @@ export function App() {
           setBrowserRuntimeProgress({
             phase: "error",
             message: err instanceof Error ? err.message : "Browser runtime install failed.",
+          });
+        });
+      }
+      if (opts.installModels && api?.ensureInferenceRuntime) {
+        setInferenceRuntimeProgress({
+          phase: "checking",
+          message: "Preparing local models…",
+        });
+        void api.ensureInferenceRuntime().then((status) => {
+          if (status.state === "notInstalled") {
+            setOllamaInfo({
+              installed: false,
+              installUrl: status.installUrl,
+              message: status.message,
+            });
+            setInferenceRuntimeProgress({
+              phase: "install",
+              message: status.message || "Install Ollama, then retry model download from Settings.",
+            });
+          }
+        }).catch((err: unknown) => {
+          setInferenceRuntimeProgress({
+            phase: "error",
+            message: err instanceof Error ? err.message : "Model install failed.",
           });
         });
       }
@@ -383,11 +444,20 @@ export function App() {
     return (
       <FirstRunWizard
         plan={plan}
+        chromiumDownloadMb={chromiumDownloadMb}
+        ollama={ollamaInfo}
+        onOpenOllamaInstall={(url) => {
+          window.open(url, "_blank", "noopener,noreferrer");
+        }}
         onComplete={(opts) => {
           void finishSetup(opts);
         }}
         onSkip={() => {
-          void finishSetup({ createDefaultWorker: false });
+          void finishSetup({
+            createDefaultWorker: false,
+            installBrowser: false,
+            installModels: false,
+          });
         }}
       />
     );
@@ -552,19 +622,30 @@ export function App() {
         />
       </AppShell>
 
-      {browserRuntimeProgress && browserRuntimeProgress.phase !== "ready" ? (
+      {browserRuntimeProgress ? (
         <RuntimeProgressBanner
+          title="Browser runtime"
           progress={browserRuntimeProgress}
+          stackIndex={inferenceRuntimeProgress ? 1 : 0}
           onDismiss={
-            browserRuntimeProgress.phase === "error"
+            browserRuntimeProgress.phase === "ready" || browserRuntimeProgress.phase === "error"
               ? () => setBrowserRuntimeProgress(null)
               : undefined
           }
         />
-      ) : browserRuntimeProgress?.phase === "ready" ? (
+      ) : null}
+      {inferenceRuntimeProgress ? (
         <RuntimeProgressBanner
-          progress={browserRuntimeProgress}
-          onDismiss={() => setBrowserRuntimeProgress(null)}
+          title="Local models"
+          progress={inferenceRuntimeProgress}
+          stackIndex={0}
+          onDismiss={
+            inferenceRuntimeProgress.phase === "ready" ||
+            inferenceRuntimeProgress.phase === "error" ||
+            inferenceRuntimeProgress.phase === "install"
+              ? () => setInferenceRuntimeProgress(null)
+              : undefined
+          }
         />
       ) : null}
 
