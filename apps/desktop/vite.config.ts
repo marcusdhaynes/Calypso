@@ -18,6 +18,7 @@ export default defineConfig({
     alias: {
       // Prefer built packages (npm run build runs shared/ui before desktop)
       "@calypso/shared": path.resolve(__dirname, "../../packages/shared/dist/index.js"),
+      "@calypso/ui/styles.css": path.resolve(__dirname, "../../packages/ui/src/styles/global.css"),
       "@calypso/ui": path.resolve(__dirname, "../../packages/ui/dist/index.js"),
     },
   },

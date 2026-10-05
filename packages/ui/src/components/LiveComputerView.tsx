@@ -1,4 +1,4 @@
-import type { ControlSession, ControlSessionCommand, Worker } from "@calypso/shared";
+import type { ControlFrame, ControlSession, ControlSessionCommand, Worker } from "@calypso/shared";
 import { Avatar } from "./Avatar.js";
 import { Button } from "./Button.js";
 import { colors, motion, radii, shadows, space } from "../theme/tokens.js";
@@ -6,11 +6,8 @@ import { colors, motion, radii, shadows, space } from "../theme/tokens.js";
 export interface LiveComputerViewProps {
   session: ControlSession;
   worker?: Worker;
-  /**
-   * Latest frame from Trice's capture loop.
-   * Prefer a blob:/data: URL or a resolved ScreenshotRef URL from IPC.
-   * Until `control.frame` lands in contracts, the desktop shell passes this in.
-   */
+  /** Latest `control.frame` payload (preferred) or a resolved data/blob URL. */
+  frame?: ControlFrame | null;
   frameUrl?: string | null;
   onCommand: (command: ControlSessionCommand) => void;
   className?: string;
@@ -27,10 +24,12 @@ const statusLabel: Record<ControlSession["status"], string> = {
 export function LiveComputerView({
   session,
   worker,
+  frame,
   frameUrl,
   onCommand,
   className,
 }: LiveComputerViewProps) {
+  const resolvedFrameUrl = frame?.dataUrl ?? frameUrl ?? null;
   const busy = session.status === "running";
   const paused = session.status === "paused";
   const userHasControl = session.status === "user_controlling";
@@ -165,9 +164,9 @@ export function LiveComputerView({
           border: `1px solid ${colors.borderStrong}`,
         }}
       >
-        {frameUrl ? (
+        {resolvedFrameUrl ? (
           <img
-            src={frameUrl}
+            src={resolvedFrameUrl}
             alt="Live computer view"
             draggable={false}
             style={{

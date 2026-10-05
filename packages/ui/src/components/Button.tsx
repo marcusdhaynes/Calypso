@@ -67,11 +67,12 @@ export function Button({
   disabled,
   style,
   className,
+  type = "button",
   ...rest
 }: ButtonProps) {
   return (
     <button
-      type="button"
+      type={type}
       disabled={disabled}
       className={["cal-focus-ring", className].filter(Boolean).join(" ")}
       style={{

@@ -12,3 +12,15 @@ export type { WorkerCardProps } from "./WorkerCard.js";
 
 export { LiveComputerView } from "./LiveComputerView.js";
 export type { LiveComputerViewProps } from "./LiveComputerView.js";
+
+export { AppShell } from "./AppShell.js";
+export type { AppShellProps } from "./AppShell.js";
+
+export { Sidebar, defaultSidebarItems } from "./Sidebar.js";
+export type { SidebarProps, SidebarNavId, SidebarNavItem } from "./Sidebar.js";
+
+export { ChatComposer } from "./ChatComposer.js";
+export type { ChatComposerProps } from "./ChatComposer.js";
+
+export { FirstRunWizard } from "./FirstRunWizard.js";
+export type { FirstRunWizardProps, FirstRunPlanView, FirstRunModelRow } from "./FirstRunWizard.js";
