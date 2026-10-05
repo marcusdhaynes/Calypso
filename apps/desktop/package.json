@@ -72,6 +72,9 @@
     },
     "portable": {
       "artifactName": "Calypso-Portable-${version}.${ext}"
-    }
+    },
+    "asarUnpack": [
+      "**/calypso-host.ps1"
+    ]
   }
 }

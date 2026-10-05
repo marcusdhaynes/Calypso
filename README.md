@@ -87,3 +87,12 @@ Workspace layout uses npm workspaces (`apps/*`, `packages/*`). `pnpm-workspace.y
 ## Key contracts (`packages/shared/src/contracts.ts`)
 
 Worker, WorkerStatus, AutonomyLevel, Team, Project, Artifact, Conversation, Message, Task / TaskGraph, Plan, Tool / ToolCall / ToolResult, ToolClass, ToolPermission, PermissionGate / PermissionDecision, DEFAULT_PERMISSION_POLICY, ModelProvider, ModelRouter, TaskClass, MemoryStore / MemoryEntry / MemoryScope, Routine, BrowserSession / BrowserAction, ComputerAction, ActionResult, ControlSession / ControlSessionCommand, CalypsoEvent, CoreRequest / CoreResponse / CorePush, CalypsoIpcApi.
+
+## Windows control (`@calypso/windows-control`, Trice)
+
+- `createWindowsControl({ bus })` returns `{ host, controller, tools }`. Register `tools` with core, route the `controlCommand` IPC to `controller.handleCommand(cmd)`, call `controller.watchFrames()` while the live view is open (returns an unsubscribe), and wire the global stop hotkey / tray to `controller.stopAll()`, `pauseAll()`, `resumeAll()`.
+- Tools: `windows.computer` (input_control), `windows.observe` (read), `windows.launch_app` (process), `windows.close_app` (process, or destructive with `force`), `windows.powershell` (process). All call the PermissionGate first.
+- One long-lived `powershell.exe` runs `packages/windows-control/host/calypso-host.ps1` over stdin/stdout JSON lines. It must stay outside the asar (`build.asarUnpack` covers it), or set `CALYPSO_PS_HOST_SCRIPT`.
+- Real user mouse/keyboard input, or Pause/Stop/Take Control, aborts the in-flight action immediately and sets the session to `user_controlling` / `paused` / `stopped`. Only one worker drives the mouse at a time; others wait in order.
+- Contract addition: `ControlFrame` and the `control.frame` event (live view frames, JPEG data URLs, ~2 fps while watched).
+- Off Windows the package uses `StubPowerShellHost`, which returns `host_unavailable`. Tests: `npm test -w @calypso/windows-control`.

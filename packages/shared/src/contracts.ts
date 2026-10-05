@@ -582,6 +582,11 @@ export interface ChatCompletionRequest {
   stream?: boolean;
   tools?: unknown[];
   stop?: string | string[];
+  /**
+   * Ollama thinking extension (Qwen3 etc.). When true, the model may emit
+   * reasoning tokens. Ignored by providers that do not support it.
+   */
+  think?: boolean;
 }
 
 export interface ChatCompletionChunk {
