@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { ControlFrame, ControlSession, FirstRunPlan, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { BrowserRuntimeProgress, ControlFrame, ControlSession, FirstRunPlan, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   Avatar,
@@ -7,6 +7,7 @@ import {
   FirstRunWizard,
   LiveComputerView,
   PermissionToast,
+  RuntimeProgressBanner,
   Sidebar,
   WorkerCard,
   colors,
@@ -96,6 +97,7 @@ export function App() {
   const [controlSession, setControlSession] = useState<ControlSession | null>(null);
   const [controlFrame, setControlFrame] = useState<ControlFrame | null>(null);
   const watchingFrames = useRef(false);
+  const [browserRuntimeProgress, setBrowserRuntimeProgress] = useState<BrowserRuntimeProgress | null>(null);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const streamingIds = useRef(new Set<string>());
   const [lines, setLines] = useState<ChatLine[]>([
@@ -175,6 +177,18 @@ export function App() {
       }
       if (event.type === "control.frame") {
         setControlFrame(event.frame);
+      }
+      if (event.type === "browser.runtime.progress") {
+        setBrowserRuntimeProgress(event.progress);
+      }
+      if (event.type === "browser.runtime.ready") {
+        setBrowserRuntimeProgress({
+          phase: "ready",
+          percent: 100,
+          message: event.status.installed
+            ? "Chromium is ready for browsing."
+            : "Browser runtime reported ready.",
+        });
       }
     });
 
@@ -296,6 +310,18 @@ export function App() {
       setSetupDone(true);
 
       const api = window.calypso;
+      if (api?.ensureBrowserRuntime) {
+        setBrowserRuntimeProgress({
+          phase: "checking",
+          message: "Preparing browser runtime…",
+        });
+        void api.ensureBrowserRuntime().catch((err: unknown) => {
+          setBrowserRuntimeProgress({
+            phase: "error",
+            message: err instanceof Error ? err.message : "Browser runtime install failed.",
+          });
+        });
+      }
       if (opts.createDefaultWorker && api?.createWorker) {
         try {
           const worker = await api.createWorker({
@@ -549,6 +575,22 @@ export function App() {
           placeholder={selected ? `Message ${selected.name}…` : "Message Calypso…"}
         />
       </AppShell>
+
+      {browserRuntimeProgress && browserRuntimeProgress.phase !== "ready" ? (
+        <RuntimeProgressBanner
+          progress={browserRuntimeProgress}
+          onDismiss={
+            browserRuntimeProgress.phase === "error"
+              ? () => setBrowserRuntimeProgress(null)
+              : undefined
+          }
+        />
+      ) : browserRuntimeProgress?.phase === "ready" ? (
+        <RuntimeProgressBanner
+          progress={browserRuntimeProgress}
+          onDismiss={() => setBrowserRuntimeProgress(null)}
+        />
+      ) : null}
 
       {permissionAsk ? (
         <PermissionToast

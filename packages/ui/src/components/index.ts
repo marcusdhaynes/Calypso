@@ -27,3 +27,6 @@ export type { FirstRunWizardProps, FirstRunPlanView, FirstRunModelRow } from "./
 
 export { PermissionToast } from "./PermissionToast.js";
 export type { PermissionToastProps } from "./PermissionToast.js";
+
+export { RuntimeProgressBanner } from "./RuntimeProgressBanner.js";
+export type { RuntimeProgressBannerProps } from "./RuntimeProgressBanner.js";
