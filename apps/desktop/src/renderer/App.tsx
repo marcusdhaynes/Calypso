@@ -440,7 +440,11 @@ export function App() {
     void window.calypso?.resolvePermission?.(requestId, allow);
   }, []);
 
-  if (!setupDone) {
+  const warmingPhases = new Set(["checking", "starting", "pulling", "downloading", "extracting"]);
+  const modelWarming =
+    !!inferenceRuntimeProgress && warmingPhases.has(inferenceRuntimeProgress.phase);
+
+    if (!setupDone) {
     return (
       <FirstRunWizard
         plan={plan}
@@ -618,7 +622,14 @@ export function App() {
 
         <ChatComposer
           onSend={onSend}
-          placeholder={selected ? `Message ${selected.name}…` : "Message Calypso…"}
+          disabled={modelWarming}
+          placeholder={
+            modelWarming
+              ? "Warming up local model…"
+              : selected
+                ? `Message ${selected.name}…`
+                : "Message Calypso…"
+          }
         />
       </AppShell>
 
