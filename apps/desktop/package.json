@@ -16,7 +16,8 @@
     "start": "electron .",
     "pack:win": "electron-builder --win --x64",
     "clean": "rm -rf dist out release",
-    "build:core": "tsc -p tsconfig.core.json"
+    "build:core": "tsc -p tsconfig.core.json",
+    "test:integration": "node test/integration-smoke.mjs"
   },
   "dependencies": {
     "@calypso/core": "*",
@@ -24,7 +25,10 @@
     "@calypso/shared": "*",
     "@calypso/ui": "*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "@calypso/browser": "*",
+    "@calypso/tools-system": "*",
+    "@calypso/windows-control": "*"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
