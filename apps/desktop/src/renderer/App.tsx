@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import type { Message, Worker } from "@calypso/shared";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import type { Message, ModelStatus, Worker } from "@calypso/shared";
 import {
   AppShell,
   Avatar,
@@ -15,19 +15,15 @@ import {
 
 const SETUP_KEY = "calypso.setup.complete";
 
-/** Fallback plan when main hasn't probed hardware yet (mirrors Angen RTX 4060 table). */
+/** Fallback plan when core hasn't probed hardware yet. */
 const FALLBACK_PLAN: FirstRunPlanView = {
-  gpuDetected: true,
-  gpuName: "NVIDIA GeForce RTX 4060 Laptop GPU (expected)",
-  vramGb: 8,
-  cpuCores: 16,
-  totalMemoryGb: 32,
+  gpuDetected: false,
+  cpuCores: 8,
+  totalMemoryGb: 16,
   modelsToDownload: [
+    { model: "qwen3:8b", purpose: "Primary interactive brain", estimatedDownloadMb: 5200, usedBy: ["normal", "code", "reasoning"] },
     { model: "qwen2.5:0.5b", purpose: "Fast trivial replies", estimatedDownloadMb: 400, usedBy: ["simple"] },
-    { model: "qwen2.5:7b", purpose: "Primary interactive brain", estimatedDownloadMb: 4700, usedBy: ["normal"] },
-    { model: "qwen2.5-coder:7b", purpose: "Code generation", estimatedDownloadMb: 4700, usedBy: ["code"] },
-    { model: "qwen2-vl:2b", purpose: "Vision (swap with chat)", estimatedDownloadMb: 1800, usedBy: ["vision"] },
-    { model: "deepseek-r1:7b", purpose: "Harder reasoning", estimatedDownloadMb: 4700, usedBy: ["reasoning"] },
+    { model: "qwen2.5vl:3b", purpose: "Vision (hard-swap)", estimatedDownloadMb: 3200, usedBy: ["vision"] },
   ],
   embedding: {
     model: "nomic-embed-text",
@@ -35,8 +31,8 @@ const FALLBACK_PLAN: FirstRunPlanView = {
     notes: "CPU embeddings so chat keeps the GPU.",
   },
   notes: [
-    "Target: RTX 4060 Laptop 8 GB — one resident ~7B Q4 at a time.",
-    "Vision hard-swaps; do not co-load two 7B models.",
+    "Target: one resident qwen3:8b; think:true only for reasoning.",
+    "Vision hard-swaps qwen2.5vl:3b — do not co-load with 8B.",
   ],
   visionSwapPolicy: "Unload text model before loading VL on ≤8 GB VRAM.",
 };
@@ -46,6 +42,7 @@ interface ChatLine {
   role: "user" | "worker" | "system";
   name?: string;
   content: string;
+  streaming?: boolean;
 }
 
 export function App() {
@@ -56,9 +53,11 @@ export function App() {
       return false;
     }
   });
+  const [plan, setPlan] = useState<FirstRunPlanView>(FALLBACK_PLAN);
   const [nav, setNav] = useState<SidebarNavId>("home");
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [lines, setLines] = useState<ChatLine[]>([
     {
       id: "welcome",
@@ -66,26 +65,122 @@ export function App() {
       content: "Calypso is online. Create workers, form teams, or just ask.",
     },
   ]);
-  const [conversationId, setConversationId] = useState<string>("local-preview");
+  const [conversationId, setConversationId] = useState<string>(() => `conv_${Date.now().toString(36)}`);
+  const streamingIds = useRef(new Set<string>());
 
   useEffect(() => {
     const api = window.calypso;
-    if (!api?.listWorkers) return;
+    if (!api) return;
+
+    void api.getFirstRunPlan?.().then((p) => {
+      if (p) setPlan(p);
+    }).catch(() => undefined);
+
+    void api.getModelStatus?.().then(setModelStatus).catch(() => undefined);
+    void api.getAppInfo?.().then((info) => {
+      if (info?.modelStatus) setModelStatus(info.modelStatus);
+    }).catch(() => undefined);
+
     void api.listWorkers().then((list) => {
       setWorkers(list);
       if (list[0]) setSelectedWorkerId(list[0].id);
-    }).catch(() => {
-      /* core may not be up in vite-only preview */
-    });
-    return api.onEvent?.((event) => {
+    }).catch(() => undefined);
+
+    const offEvent = api.onEvent?.((event) => {
       if (event.type === "worker.status" || event.type === "worker.updated") {
         void api.listWorkers().then(setWorkers).catch(() => undefined);
       }
       if (event.type === "message.created") {
         const m = event.message;
-        setLines((prev) => [...prev, messageToLine(m)]);
+        // Skip user messages we already appended locally; skip streaming worker msgs until done.
+        if (m.author.type === "user") return;
+        if (streamingIds.current.has(m.id)) return;
+        setLines((prev) => {
+          if (prev.some((l) => l.id === m.id)) return prev;
+          return [...prev, messageToLine(m)];
+        });
+      }
+      if (event.type === "permission.asked") {
+        setLines((prev) => [
+          ...prev,
+          {
+            id: `perm-${event.requestId}`,
+            role: "system",
+            content: `Permission needed: ${event.reason} (${event.toolCall.toolName}). Approve from the prompt when shown.`,
+          },
+        ]);
       }
     });
+
+    const offStream = api.onStream?.((push) => {
+      streamingIds.current.add(push.messageId);
+      setLines((prev) => {
+        const idx = prev.findIndex((l) => l.id === push.messageId);
+        if (push.done) {
+          streamingIds.current.delete(push.messageId);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = {
+              ...copy[idx],
+              content: copy[idx].content + (push.delta || ""),
+              streaming: false,
+            };
+            return copy;
+          }
+          return [
+            ...prev,
+            {
+              id: push.messageId,
+              role: push.workerId ? "worker" : "system",
+              name: push.workerId,
+              content: push.delta || "",
+              streaming: false,
+            },
+          ];
+        }
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = {
+            ...copy[idx],
+            content: copy[idx].content + push.delta,
+            streaming: true,
+          };
+          return copy;
+        }
+        return [
+          ...prev,
+          {
+            id: push.messageId,
+            role: push.workerId ? "worker" : "system",
+            name: push.workerId,
+            content: push.delta,
+            streaming: true,
+          },
+        ];
+      });
+    });
+
+    const onTray = (e: Event) => {
+      const detail = (e as CustomEvent<{ action: string }>).detail;
+      if (detail?.action === "new-command") {
+        setNav("new");
+        setConversationId(`conv_${Date.now().toString(36)}`);
+        setLines([
+          {
+            id: "welcome-new",
+            role: "system",
+            content: "New conversation — type a command below.",
+          },
+        ]);
+      }
+    };
+    window.addEventListener("calypso:tray", onTray);
+
+    return () => {
+      offEvent?.();
+      offStream?.();
+      window.removeEventListener("calypso:tray", onTray);
+    };
   }, []);
 
   const selected = useMemo(
@@ -93,24 +188,56 @@ export function App() {
     [workers, selectedWorkerId]
   );
 
-  const finishSetup = useCallback((opts: { createDefaultWorker: boolean }) => {
+  const finishSetup = useCallback(async (opts: { createDefaultWorker: boolean }) => {
     try {
       localStorage.setItem(SETUP_KEY, "1");
     } catch {
       /* ignore */
     }
     setSetupDone(true);
-    if (opts.createDefaultWorker && workers.length === 0) {
-      setLines((prev) => [
-        ...prev,
-        {
-          id: `sys-${Date.now()}`,
-          role: "system",
-          content: "Default Assistant worker will be created once core persistence is connected.",
-        },
-      ]);
+    const api = window.calypso;
+    if (opts.createDefaultWorker && api?.createWorker) {
+      try {
+        const worker = await api.createWorker({
+          id: `worker_${Date.now().toString(36)}`,
+          name: "Assistant",
+          avatar: "assistant",
+          role: "general assistant",
+          personality: "helpful, concise",
+          instructions: "Help the user get work done on their computer.",
+          skills: ["chat", "planning"],
+          tools: [],
+          permissions: [],
+          preferredModel: "normal",
+          workspace: ".",
+          autonomyLevel: "ask",
+        });
+        setWorkers((prev) => {
+          if (prev.some((w) => w.id === worker.id)) return prev;
+          return [...prev, worker];
+        });
+        setSelectedWorkerId(worker.id);
+        setConversationId(`conv_${Date.now().toString(36)}`);
+        setLines((prev) => [
+          ...prev,
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            content: `Created default worker “${worker.name}”.`,
+          },
+        ]);
+      } catch (err) {
+        setLines((prev) => [
+          ...prev,
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            content: `Could not create default worker: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ]);
+      }
     }
-  }, [workers.length]);
+  }, []);
 
   const onSend = useCallback(
     (text: string) => {
@@ -119,34 +246,46 @@ export function App() {
         { id: `u-${Date.now()}`, role: "user", content: text },
       ]);
       const api = window.calypso;
-      if (api?.sendMessage) {
-        void api
-          .sendMessage(conversationId, text)
-          .then((m) => {
-            /* message.created event should also fire; avoid dup if it does */
-            setConversationId(m.conversationId);
-          })
-          .catch(() => {
-            setLines((prev) => [
-              ...prev,
-              {
-                id: `sys-${Date.now()}`,
-                role: "system",
-                content: "Core isn't reachable yet — message stayed local.",
-              },
-            ]);
-          });
+      if (!api?.sendMessage) {
+        setLines((prev) => [
+          ...prev,
+          {
+            id: `sys-${Date.now()}`,
+            role: "system",
+            content: "Core isn't reachable yet — message stayed local.",
+          },
+        ]);
+        return;
       }
+      void api
+        .sendMessage(conversationId, text, selectedWorkerId ?? undefined)
+        .then((m) => {
+          setConversationId(m.conversationId);
+        })
+        .catch((err) => {
+          setLines((prev) => [
+            ...prev,
+            {
+              id: `sys-${Date.now()}`,
+              role: "system",
+              content: `Send failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ]);
+        });
     },
-    [conversationId]
+    [conversationId, selectedWorkerId]
   );
 
   if (!setupDone) {
     return (
       <FirstRunWizard
-        plan={FALLBACK_PLAN}
-        onComplete={finishSetup}
-        onSkip={() => finishSetup({ createDefaultWorker: false })}
+        plan={plan}
+        onComplete={(opts) => {
+          void finishSetup(opts);
+        }}
+        onSkip={() => {
+          void finishSetup({ createDefaultWorker: false });
+        }}
       />
     );
   }
@@ -156,6 +295,11 @@ export function App() {
       titlebar={
         <span style={{ WebkitAppRegion: "drag" } as CSSProperties}>
           Calypso
+          {modelStatus && !modelStatus.ready ? (
+            <span style={{ marginLeft: 12, color: colors.warning ?? "#e8a838", fontSize: 12, WebkitAppRegion: "no-drag" } as CSSProperties}>
+              Model unavailable
+            </span>
+          ) : null}
         </span>
       }
       sidebar={
@@ -208,6 +352,9 @@ export function App() {
           </div>
           <div style={{ fontSize: 12.5, color: colors.textMuted }}>
             {selected ? `Talking with ${selected.name}` : "Home"}
+            {modelStatus && !modelStatus.ready
+              ? ` · ${modelStatus.message ?? "Model unavailable"}`
+              : ""}
           </div>
         </div>
       </header>
@@ -248,6 +395,7 @@ export function App() {
               fontSize: line.role === "system" ? 13 : 14.5,
               lineHeight: 1.5,
               fontFamily: typography.fontSans,
+              opacity: line.streaming ? 0.9 : 1,
             }}
           >
             {line.name ? (
@@ -256,11 +404,15 @@ export function App() {
               </div>
             ) : null}
             {line.content}
+            {line.streaming ? "▍" : ""}
           </article>
         ))}
       </div>
 
-      <ChatComposer onSend={onSend} placeholder={selected ? `Message ${selected.name}…` : "Message Calypso…"} />
+      <ChatComposer
+        onSend={onSend}
+        placeholder={selected ? `Message ${selected.name}…` : "Message Calypso…"}
+      />
     </AppShell>
   );
 }
