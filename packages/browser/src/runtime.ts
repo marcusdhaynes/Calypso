@@ -17,10 +17,15 @@ export interface BrowserRuntimeProgress {
   message: string;
 }
 
+/** Playwright chromium install (~chrome + headless shell + ffmpeg), win/linux x64. */
+export const CHROMIUM_ESTIMATED_DOWNLOAD_MB = 300;
+
 export interface BrowserRuntimeStatus {
   installed: boolean;
   browsersPath: string;
   executablePath: string;
+  /** Approximate download size when not yet installed. */
+  estimatedDownloadMb: number;
 }
 
 export interface EnsureChromiumOptions {
@@ -64,6 +69,7 @@ export async function getBrowserRuntimeStatus(
     installed: existsSync(executablePath),
     browsersPath,
     executablePath,
+    estimatedDownloadMb: CHROMIUM_ESTIMATED_DOWNLOAD_MB,
   };
 }
 

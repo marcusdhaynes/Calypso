@@ -311,6 +311,11 @@ export interface Task {
   assignedWorkerId?: WorkerId;
   planId?: PlanId;
   projectId?: ProjectId;
+  /** Conversation this task reports into (group chat / worker reply). */
+  conversationId?: ConversationId;
+  teamId?: TeamId;
+  /** Dispatcher retry attempts so far (Anky). */
+  retryCount?: number;
   taskClass: TaskClass;
   result?: string;
   error?: string;
@@ -348,6 +353,10 @@ export interface PlanStep {
   taskClass: TaskClass;
   dependsOnStepIds: string[];
   taskId?: TaskId;
+  /** Preferred role matching a team member (Anky planner). */
+  suggestedRole?: string;
+  /** Preferred concrete worker when known. */
+  suggestedWorkerId?: WorkerId;
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +596,16 @@ export interface ChatMessage {
   content: string | ChatContentPart[];
   name?: string;
   tool_call_id?: string;
+  /** OpenAI-style tool calls on assistant messages (Anky agent loop). */
+  tool_calls?: ChatToolCall[];
+}
+
+/** OpenAI-compatible tool call shape carried on ChatMessage / stream deltas. */
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+  index?: number;
 }
 
 export type ChatContentPart =
@@ -777,6 +796,8 @@ export interface BrowserRuntimeStatus {
   installed: boolean;
   browsersPath: string;
   executablePath: string;
+  /** Approximate Playwright Chromium download size (chrome + headless shell + ffmpeg). */
+  estimatedDownloadMb: number;
 }
 
 // Inference runtime (Angen) — Ollama detect/start + first-run model pulls
@@ -1041,6 +1062,8 @@ export type CoreRequest =
   | { id: string; method: "stopAll"; params?: undefined }
   | { id: string; method: "pauseWorkers"; params?: undefined }
   | { id: string; method: "resumeWorkers"; params?: undefined }
+  | { id: string; method: "cancelTask"; params: { taskId: TaskId } }
+  | { id: string; method: "retryTask"; params: { taskId: TaskId } }
   | {
       id: string;
       method: "openBrowserSession";
@@ -1095,6 +1118,8 @@ export interface CalypsoIpcApi {
   stopAll(): Promise<void>;
   pauseWorkers(): Promise<void>;
   resumeWorkers(): Promise<void>;
+  cancelTask(taskId: TaskId): Promise<Task | undefined>;
+  retryTask(taskId: TaskId): Promise<Task | undefined>;
   openBrowserSession(
     workerId: WorkerId,
     projectId?: ProjectId

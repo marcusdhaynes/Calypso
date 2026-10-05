@@ -100,7 +100,7 @@ Worker, WorkerStatus, AutonomyLevel, Team, Project, Artifact, Conversation, Mess
 ## Browser (`@calypso/browser`, Spin)
 
 - `createBrowserControl({ dataRoot, browsersPath })` returns `{ manager, tools, ensureRuntime, getRuntimeStatus }`. Register `tools` with core; call `await browser.ensureRuntime()` (or open a session — it ensures first) before a worker browses; pass `sessionId` into every tool call; `await browser.dispose()` on quit.
-- **Chromium is not bundled in Calypso.exe.** First-run / first browse downloads it into `userData/ms-playwright` via `PLAYWRIGHT_BROWSERS_PATH`. Progress events: `browser.runtime.progress` / `browser.runtime.ready`. IPC: `ensureBrowserRuntime`, `getBrowserRuntimeStatus`.
+- **Chromium is not bundled in Calypso.exe.** First-run / first browse downloads it into `userData/ms-playwright` via `PLAYWRIGHT_BROWSERS_PATH`. Progress events: `browser.runtime.progress` / `browser.runtime.ready`. IPC: `ensureBrowserRuntime`, `getBrowserRuntimeStatus` (includes `estimatedDownloadMb: 300` for the consent step).
 - Tools: `browser.navigate` (network / `browser_offorigin_nav` when leaving the allow-list), `browser.click` / `browser.type` (write), `browser.extract` / `browser.snapshot` (read), `browser.newTab` (network), `browser.upload` / `browser.download` (dedicated classes). All call the PermissionGate first.
 - DomLocator-first (`role` / `label` / `text` / `css` / `testId` / `xpath`). Each `BrowserAction` returns an `ActionResult` with verify-after-act.
 - One Chromium process, persistent storage per session under `dataRoot/<sessionId>/`. Headless by default; set `CALYPSO_BROWSER_HEADED=1` for a visible window.

@@ -5,6 +5,7 @@ import type { SessionManagerOptions } from "./session.js";
 import { createBrowserTools } from "./tools.js";
 import {
   applyBrowsersPath,
+  CHROMIUM_ESTIMATED_DOWNLOAD_MB,
   defaultBrowsersPath,
   ensureChromium,
   getBrowserRuntimeStatus,
@@ -23,6 +24,7 @@ export type { RunActionOptions } from "./actions.js";
 export { createBrowserTools } from "./tools.js";
 export {
   applyBrowsersPath,
+  CHROMIUM_ESTIMATED_DOWNLOAD_MB,
   defaultBrowsersPath,
   ensureChromium,
   getBrowserRuntimeStatus,
