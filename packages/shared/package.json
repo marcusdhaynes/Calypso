@@ -1,0 +1,26 @@
+{
+  "name": "@calypso/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Additive contracts for Calypso local multi-agent orchestration.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b -p tsconfig.json",
+    "typecheck": "tsc -b -p tsconfig.json --pretty false"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

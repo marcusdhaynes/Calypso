@@ -1,0 +1,30 @@
+{
+  "name": "@calypso/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local plan → check → retry orchestration for Calypso team leads.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b -p tsconfig.json",
+    "typecheck": "tsc -b -p tsconfig.json --pretty false",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@calypso/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
