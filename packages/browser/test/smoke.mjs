@@ -4,12 +4,11 @@
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const dist = pathToFileURL(
-  join(new URL("..", import.meta.url).pathname, "dist", "index.js"),
-).href;
+const here = dirname(fileURLToPath(import.meta.url));
+const dist = pathToFileURL(join(here, "..", "dist", "index.js")).href;
 
 const { BrowserSessionManager, runBrowserAction } = await import(dist);
 
