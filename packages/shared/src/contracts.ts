@@ -544,6 +544,25 @@ export interface ControlSession {
   updatedAt: number;
 }
 
+/**
+ * One captured frame of the screen for the live computer view (Trice).
+ * Streamed while a computer ControlSession is active and someone is watching.
+ * `dataUrl` is a small JPEG for display; `ref` is a file path when saved to disk.
+ * Coordinates in `cursor` are physical screen pixels; `scale` maps frame px → screen px.
+ */
+export interface ControlFrame {
+  mimeType: "image/jpeg" | "image/png";
+  width: number;
+  height: number;
+  /** frame px = screen px × scale */
+  scale: number;
+  /** Top-left of the captured area in screen px (virtual desktop can be negative). */
+  origin: { x: number; y: number };
+  dataUrl?: string;
+  ref?: ScreenshotRef;
+  cursor?: { x: number; y: number };
+}
+
 export type ControlSessionCommand =
   | { type: "pause"; sessionId: ControlSessionId }
   | { type: "resume"; sessionId: ControlSessionId }
@@ -781,6 +800,8 @@ export type CalypsoEvent =
   | { type: "control.session.command"; command: ControlSessionCommand }
   | { type: "control.action"; sessionId: ControlSessionId; actionId: ActionId; summary: string; at: number }
   | { type: "control.action.result"; sessionId: ControlSessionId; result: ActionResult }
+  /** Live screen frame for the computer view; only published while frame streaming is on. */
+  | { type: "control.frame"; sessionId: ControlSessionId; frame: ControlFrame; at: number }
   | { type: "project.updated"; project: Project }
   | { type: "artifact.created"; artifact: Artifact }
   | { type: "system.error"; message: string; cause?: string; at: number };

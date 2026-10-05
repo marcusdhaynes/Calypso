@@ -27,6 +27,16 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.apiKey = opts.apiKey;
   }
 
+
+  /** Drop undefined keys so providers that reject unknown nulls stay happy. */
+  private body(request: ChatCompletionRequest, stream: boolean): string {
+    const payload: Record<string, unknown> = { ...request, stream };
+    for (const key of Object.keys(payload)) {
+      if (payload[key] === undefined) delete payload[key];
+    }
+    return JSON.stringify(payload);
+  }
+
   private headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
@@ -44,7 +54,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify({ ...request, stream: false }),
+      body: this.body(request, false),
     });
     if (!res.ok) {
       throw new Error(`ModelProvider ${this.id} complete failed: ${res.status}`);
@@ -59,7 +69,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify({ ...request, stream: true }),
+      body: this.body(request, true),
       signal,
     });
     if (!res.ok || !res.body) {
