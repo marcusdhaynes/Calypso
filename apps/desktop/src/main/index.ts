@@ -202,6 +202,76 @@ function resolveTrayIcon(): NativeImage {
   return nativeImage.createEmpty();
 }
 
+function liveControlClick(method: "pauseLive" | "resumeLive" | "stopLive"): void {
+  void callCore(method).catch((err) => console.error(err));
+}
+
+/** Native app menu — Windows UIA can see these (Chromium Live buttons cannot). */
+function createApplicationMenu(): void {
+  const liveSubmenu: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: "Pause",
+      id: "live-pause",
+      accelerator: "CommandOrControl+Shift+P",
+      click: () => liveControlClick("pauseLive"),
+    },
+    {
+      label: "Resume",
+      id: "live-resume",
+      accelerator: "CommandOrControl+Shift+R",
+      click: () => liveControlClick("resumeLive"),
+    },
+    {
+      label: "Stop",
+      id: "live-stop",
+      accelerator: "CommandOrControl+Shift+S",
+      click: () => liveControlClick("stopLive"),
+    },
+  ];
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: "Calypso",
+      submenu: [
+        { label: "Open", click: () => showMainWindow() },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "Live computer",
+      id: "live-computer-menu",
+      submenu: liveSubmenu,
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createTray(): void {
   const icon = resolveTrayIcon();
   tray = new Tray(icon);
@@ -223,6 +293,23 @@ function createTray(): void {
         void callCore("resumeWorkers").catch((err) => console.error(err));
       },
     },
+    { type: "separator" },
+    {
+      label: "Pause live computer",
+      id: "tray-live-pause",
+      click: () => liveControlClick("pauseLive"),
+    },
+    {
+      label: "Resume live computer",
+      id: "tray-live-resume",
+      click: () => liveControlClick("resumeLive"),
+    },
+    {
+      label: "Stop live computer",
+      id: "tray-live-stop",
+      click: () => liveControlClick("stopLive"),
+    },
+    { type: "separator" },
     {
       label: "New command",
       click: () => {
@@ -357,6 +444,9 @@ function registerIpc(): void {
     "stopAll",
     "pauseWorkers",
     "resumeWorkers",
+    "pauseLive",
+    "resumeLive",
+    "stopLive",
     "cancelTask",
     "retryTask",
     "openBrowserSession",

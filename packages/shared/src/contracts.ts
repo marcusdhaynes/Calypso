@@ -1143,6 +1143,10 @@ export type CoreRequest =
   | { id: string; method: "stopAll"; params?: undefined }
   | { id: string; method: "pauseWorkers"; params?: undefined }
   | { id: string; method: "resumeWorkers"; params?: undefined }
+  /** Pause active Live computer control sessions only (not the agent dispatcher). */
+  | { id: string; method: "pauseLive"; params?: undefined }
+  | { id: string; method: "resumeLive"; params?: undefined }
+  | { id: string; method: "stopLive"; params?: undefined }
   | { id: string; method: "cancelTask"; params: { taskId: TaskId } }
   | { id: string; method: "retryTask"; params: { taskId: TaskId } }
   | {

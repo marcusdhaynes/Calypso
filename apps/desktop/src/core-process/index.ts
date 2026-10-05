@@ -728,6 +728,19 @@ async function handle(req: CoreRequest): Promise<void> {
         windowsControl?.controller.resumeAll();
         respond({ id: req.id, ok: true, result: null });
         return;
+      case "pauseLive":
+        // Live computer only — do not pause the agent dispatcher.
+        windowsControl?.controller.pauseAll();
+        respond({ id: req.id, ok: true, result: null });
+        return;
+      case "resumeLive":
+        windowsControl?.controller.resumeAll();
+        respond({ id: req.id, ok: true, result: null });
+        return;
+      case "stopLive":
+        windowsControl?.controller.stopAll();
+        respond({ id: req.id, ok: true, result: null });
+        return;
       case "cancelTask": {
         const task = orchestrator.cancelTask(req.params.taskId);
         respond({ id: req.id, ok: true, result: task ?? null });
