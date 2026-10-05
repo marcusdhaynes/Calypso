@@ -1,3 +1,4 @@
+import { Markdown } from "./Markdown";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Artifact, BrowserRuntimeProgress, CalypsoSettings, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
@@ -260,16 +261,7 @@ export function App() {
       }
       if (event.type === "routine.updated" || event.type === "routine.fired") {
         void api.listRoutines?.().then(setRoutines).catch(() => undefined);
-        if (event.type === "routine.fired") {
-          setLines((prev) => [
-            ...prev,
-            {
-              id: `routine-${event.routineId}-${event.at}`,
-              role: "system",
-              content: `Routine fired → task ${event.taskId}`,
-            },
-          ]);
-        }
+        // Routine runs post their replies into their own conversation; no extra chat line here.
       }
       if (event.type === "permission.asked") {
         setPermissionAsk({
@@ -343,9 +335,12 @@ export function App() {
           streamingIds.current.delete(push.messageId);
           if (idx >= 0) {
             const copy = [...prev];
+            const cur = copy[idx];
+            const delta = push.delta || "";
             copy[idx] = {
-              ...copy[idx],
-              content: copy[idx].content + (push.delta || ""),
+              ...cur,
+              // A final delta can repeat text already delivered via message.created (e.g. errors).
+              content: cur.streaming || !cur.content.endsWith(delta) ? cur.content + delta : cur.content,
               streaming: false,
             };
             return copy;
@@ -1076,10 +1071,11 @@ export function App() {
             >
               {line.name ? (
                 <div style={{ fontSize: 11, fontWeight: 600, color: colors.accent, marginBottom: 4 }}>
-                  {line.name}
+                  {workers.find((w) => w.id === line.name)?.name ?? line.name}
                 </div>
               ) : null}
-              {line.content}{line.streaming ? "▍" : ""}
+              {line.role === "system" ? line.content : <Markdown text={line.content} />}
+              {line.streaming ? <span style={{ opacity: 0.6 }}>▍</span> : null}
             </article>
           ))}
         </div>

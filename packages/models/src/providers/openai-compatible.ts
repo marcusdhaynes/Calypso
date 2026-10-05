@@ -36,6 +36,19 @@ export class OpenAICompatibleProvider implements ModelProvider {
   /** Drop undefined keys so providers that reject unknown nulls stay happy. */
   private body(request: ChatCompletionRequest, stream: boolean): string {
     const payload: Record<string, unknown> = { ...request, stream };
+    if (this.id === "ollama") {
+      // Ollama's /v1 endpoint ignores `think`; qwen3 thinks by default and spends
+      // hundreds of hidden tokens per reply (≈3s vs ≈12s measured on the 4060).
+      // reasoning_effort "none" is what actually turns thinking off there.
+      if (request.think === true) {
+        delete payload.reasoning_effort;
+      } else {
+        payload.reasoning_effort = "none";
+      }
+      delete payload.think;
+    } else {
+      delete payload.think;
+    }
     for (const key of Object.keys(payload)) {
       if (payload[key] === undefined) delete payload[key];
     }

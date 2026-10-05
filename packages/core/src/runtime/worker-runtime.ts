@@ -108,6 +108,8 @@ export class WorkerRuntime {
           temperature: 0.4,
           stream: true,
           tools: ctx.toolSchemas.length ? ctx.toolSchemas : undefined,
+          // Hidden reasoning tokens cost seconds per reply on local qwen3; only reasoning tasks think.
+          think: task.taskClass === "reasoning",
         };
 
         let assistantText = "";
