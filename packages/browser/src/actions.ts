@@ -6,6 +6,12 @@ import type {
 } from "@calypso/shared";
 import { resolveLocator } from "./locators.js";
 import type { BrowserSessionManager } from "./session.js";
+import {
+  extractTextFromOutput,
+  isDeadPageUrl,
+  isNonEmptyExtract,
+  urlMatchesTarget,
+} from "./verify.js";
 
 export interface RunActionOptions {
   sessionId: BrowserSessionId;
@@ -13,6 +19,17 @@ export interface RunActionOptions {
   /** Max retries on verification failure. */
   maxRetries?: number;
   signal?: AbortSignal;
+}
+
+function defaultMaxRetries(action: BrowserAction): number {
+  switch (action.type) {
+    case "navigate":
+    case "extract":
+    case "newTab":
+      return 2;
+    default:
+      return 1;
+  }
 }
 
 /**
@@ -25,7 +42,7 @@ export async function runBrowserAction(
 ): Promise<ActionResult> {
   const started = Date.now();
   const actionId = randomUUID();
-  const maxRetries = opts.maxRetries ?? 1;
+  const maxRetries = opts.maxRetries ?? defaultMaxRetries(opts.action);
   let retries = 0;
   let lastError: string | undefined;
 
@@ -49,6 +66,8 @@ export async function runBrowserAction(
       lastError = result.error ?? "verification failed";
       retries += 1;
       if (retries > maxRetries) return { ...result, retries: retries - 1 };
+      // Brief settle before retry (slow render / empty body)
+      await new Promise((r) => setTimeout(r, 250 * retries));
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
       retries += 1;
@@ -62,6 +81,7 @@ export async function runBrowserAction(
           durationMs: Date.now() - started,
         };
       }
+      await new Promise((r) => setTimeout(r, 250 * retries));
     }
   }
 
@@ -98,28 +118,50 @@ async function executeOnce(
         };
       }
       const resp = await page.goto(action.url, { waitUntil: "domcontentloaded" });
-      const ok = resp ? resp.ok() || resp.status() === 0 : true;
+      const httpOk = resp ? resp.ok() || resp.status() === 0 : true;
       // After first successful nav to a new origin with empty allow-list, pin it
       try {
-        const origin = new URL(action.url).origin;
-        const session = manager.getSession(sessionId);
-        if (session && session.allowedOrigins.length === 0) {
-          manager.allowOrigin(sessionId, origin);
+        const parsed = new URL(action.url);
+        // Only pin http(s) origins — data:/about: must not lock the allow-list
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          const session = manager.getSession(sessionId);
+          if (session && session.allowedOrigins.length === 0) {
+            manager.allowOrigin(sessionId, parsed.origin);
+          }
         }
       } catch {
         /* ignore */
       }
       manager.refreshTabMeta(sessionId);
-      const verified = page.url().startsWith(action.url.split("#")[0]!) || page.url().includes(new URL(action.url).hostname);
-      output = { url: page.url(), status: resp?.status() };
+
+      const landedUrl = page.url();
+      const urlOk = urlMatchesTarget(landedUrl, action.url) && !isDeadPageUrl(landedUrl);
+      // Body must have real content — blank shells fail and get retried
+      let bodyText = "";
+      try {
+        await page.waitForSelector("body", { state: "attached", timeout: 10_000 });
+        bodyText = await page.innerText("body", { timeout: 10_000 });
+      } catch {
+        bodyText = "";
+      }
+      const bodyOk = isNonEmptyExtract(bodyText);
+      const verified = urlOk && bodyOk;
+      output = {
+        url: landedUrl,
+        status: resp?.status(),
+        bodyChars: bodyText.replace(/\s+/g, " ").trim().length,
+      };
+      let error: string | undefined;
+      if (!urlOk) error = `Landed on ${landedUrl} instead of ${action.url}`;
+      else if (!bodyOk) error = `Page body empty after navigate to ${action.url}`;
       return {
         actionId,
-        ok: !!ok,
+        ok: !!httpOk && urlOk,
         verified,
         retries: 0,
         output,
         durationMs: Date.now() - started,
-        error: verified ? undefined : `Landed on ${page.url()} instead of ${action.url}`,
+        error,
       };
     }
     case "click": {
@@ -210,30 +252,56 @@ async function executeOnce(
         const loc = resolveLocator(page, action.locator).first();
         await loc.waitFor({ state: "visible", timeout: 10_000 });
         const text = await loc.innerText({ timeout: 10_000 });
-        output = { text };
+        output = { text, url: page.url() };
       } else {
         const text = await page.innerText("body", { timeout: 10_000 });
         const title = await page.title();
         output = { title, text: text.slice(0, 50_000), url: page.url() };
       }
+      const text = extractTextFromOutput(output);
+      const verified = isNonEmptyExtract(text);
       return {
         actionId,
         ok: true,
-        verified: true,
+        verified,
         retries: 0,
         output,
         durationMs: Date.now() - started,
+        error: verified
+          ? undefined
+          : "Empty extract — page or locator returned no text (will retry)",
       };
     }
     case "newTab": {
       const tab = await manager.newTab(sessionId, action.url);
+      let verified = true;
+      let error: string | undefined;
+      if (action.url) {
+        const tabPage = manager.getPage(sessionId, tab.id);
+        const landed = tabPage.url();
+        const urlOk = urlMatchesTarget(landed, action.url) && !isDeadPageUrl(landed);
+        let bodyOk = true;
+        try {
+          const bodyText = await tabPage.innerText("body", { timeout: 10_000 });
+          bodyOk = isNonEmptyExtract(bodyText);
+        } catch {
+          bodyOk = false;
+        }
+        verified = urlOk && bodyOk;
+        if (!verified) {
+          error = !urlOk
+            ? `New tab landed on ${landed} instead of ${action.url}`
+            : `New tab body empty after open ${action.url}`;
+        }
+      }
       return {
         actionId,
         ok: true,
-        verified: true,
+        verified,
         retries: 0,
         output: tab,
         durationMs: Date.now() - started,
+        error,
       };
     }
     case "switchTab": {
@@ -267,13 +335,15 @@ async function executeOnce(
         base64: buffer.toString("base64"),
         byteLength: buffer.byteLength,
       };
+      const verified = buffer.byteLength > 100;
       return {
         actionId,
         ok: true,
-        verified: true,
+        verified,
         retries: 0,
         output,
         durationMs: Date.now() - started,
+        error: verified ? undefined : "Screenshot too small",
       };
     }
     default: {

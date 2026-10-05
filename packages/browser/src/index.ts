@@ -21,6 +21,13 @@ export type { SessionManagerOptions } from "./session.js";
 export { resolveLocator } from "./locators.js";
 export { runBrowserAction } from "./actions.js";
 export type { RunActionOptions } from "./actions.js";
+export {
+  extractTextFromOutput,
+  isDeadPageUrl,
+  isNonEmptyExtract,
+  normalizeNavTarget,
+  urlMatchesTarget,
+} from "./verify.js";
 export { createBrowserTools } from "./tools.js";
 export {
   applyBrowsersPath,

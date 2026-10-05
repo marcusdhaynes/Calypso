@@ -155,7 +155,7 @@ async function ensureSession(
 export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
   const navigate: Tool = {
     name: "browser.navigate",
-    description: "Navigate the worker's browser session to a URL (DOM-verified).",
+    description: "Navigate to a URL; host verifies landed URL + non-empty body (retries on fail).",
     parameters: {
       type: "object",
       properties: {
@@ -234,7 +234,7 @@ export function createBrowserTools(manager: BrowserSessionManager): Tool[] {
 
   const extract: Tool = {
     name: "browser.extract",
-    description: "Extract text from the page or a DomLocator.",
+    description: "Extract text from the page or a DomLocator; empty text fails verify and retries.",
     parameters: {
       type: "object",
       properties: {
