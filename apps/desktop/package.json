@@ -14,15 +14,16 @@
     "dev:renderer": "vite",
     "dev": "npm run build:main && npm run build:preload && concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "start": "electron .",
-    "pack:win": "electron-builder --win --x64 && node scripts/patch-win-native.mjs",
+    "pack:win": "node scripts/stage-win-native.mjs && electron-builder --win --x64 && node scripts/patch-win-native.mjs",
     "clean": "rm -rf dist out release",
     "build:core": "tsc -p tsconfig.core.json",
     "test:integration": "node test/integration-smoke.mjs",
     "rebuild:native": "electron-builder install-app-deps",
-    "pack:win:dir": "electron-builder --win --x64 --dir && node scripts/patch-win-native.mjs",
-    "postinstall": "node -e \"try{require('child_process').execSync('npx electron-builder install-app-deps',{stdio:'inherit'})}catch(e){process.exit(0)}\"",
-    "pack:win:nsis": "electron-builder --win nsis --x64 && node scripts/patch-win-native.mjs",
-    "pack:win:portable": "electron-builder --win portable --x64 && node scripts/patch-win-native.mjs"
+    "pack:win:dir": "node scripts/stage-win-native.mjs && electron-builder --win --x64 --dir && node scripts/patch-win-native.mjs",
+    "postinstall": "node -e \"process.exit(0)\"",
+    "pack:win:nsis": "node scripts/stage-win-native.mjs && electron-builder --win nsis --x64 && node scripts/patch-win-native.mjs",
+    "pack:win:portable": "node scripts/stage-win-native.mjs && electron-builder --win portable --x64 && node scripts/patch-win-native.mjs",
+    "stage:win-native": "node scripts/stage-win-native.mjs"
   },
   "dependencies": {
     "@calypso/browser": "*",
@@ -95,7 +96,7 @@
     "portable": {
       "artifactName": "Calypso-Portable-${version}.${ext}"
     },
-    "npmRebuild": true,
+    "npmRebuild": false,
     "buildDependenciesFromSource": false,
     "nodeGypRebuild": false,
     "extraMetadata": {
@@ -115,6 +116,9 @@
         "from": "resources/tray-icon.png",
         "to": "tray-icon.png"
       }
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
     ]
   },
   "author": "Calypso"
