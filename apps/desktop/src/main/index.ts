@@ -272,6 +272,7 @@ function registerIpc(): void {
     "getBrowserRuntimeStatus",
     "ensureInferenceRuntime",
     "getInferenceRuntimeStatus",
+    "preloadPrimaryModel",
     "listWorkers",
     "createWorker",
     "updateWorker",

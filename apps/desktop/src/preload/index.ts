@@ -74,6 +74,7 @@ const api: CalypsoIpcApi = {
   getBrowserRuntimeStatus: () => ipcRenderer.invoke("calypso:getBrowserRuntimeStatus"),
   ensureInferenceRuntime: () => ipcRenderer.invoke("calypso:ensureInferenceRuntime"),
   getInferenceRuntimeStatus: () => ipcRenderer.invoke("calypso:getInferenceRuntimeStatus"),
+  preloadPrimaryModel: () => ipcRenderer.invoke("calypso:preloadPrimaryModel"),
   getModelStatus: () => ipcRenderer.invoke("calypso:getModelStatus"),
   getAppInfo: () => ipcRenderer.invoke("calypso:getAppInfo"),
   onTray(handler: (payload: { action: string }) => void) {

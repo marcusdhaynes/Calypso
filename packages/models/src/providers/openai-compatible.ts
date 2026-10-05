@@ -8,6 +8,11 @@ import type {
 /**
  * Generic OpenAI-compatible HTTP provider (Ollama, llama.cpp server, cloud).
  * Streaming uses SSE over fetch.
+ *
+ * keep_alive: Ollama's OpenAI-compatible `/v1` endpoints do NOT accept
+ * `keep_alive`. To keep a model resident in VRAM, use OllamaAdmin native
+ * `/api/generate` (see preloadPrimaryModel + SharedInferenceServer
+ * refreshKeepAliveAfterInference). Do not add keep_alive to chat payloads here.
  */
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly id: string;

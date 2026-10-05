@@ -54,6 +54,11 @@ export type {
   InferenceRuntimeStatusOptions,
   InferenceRuntimeEventSink,
 } from "./setup/ensure-inference-runtime.js";
+export {
+  preloadPrimaryModel,
+  PRIMARY_MODEL_KEEP_ALIVE,
+} from "./setup/preload-primary-model.js";
+export type { PreloadPrimaryModelOptions } from "./setup/preload-primary-model.js";
 export type {
   InferenceRuntimeProgress,
   InferenceRuntimePhase,

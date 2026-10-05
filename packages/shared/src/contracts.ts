@@ -1011,6 +1011,7 @@ export type CoreRequest =
   | { id: string; method: "getBrowserRuntimeStatus"; params?: undefined }
   | { id: string; method: "ensureInferenceRuntime"; params?: undefined }
   | { id: string; method: "getInferenceRuntimeStatus"; params?: undefined }
+  | { id: string; method: "preloadPrimaryModel"; params?: undefined }
   | { id: string; method: "listWorkers"; params?: undefined }
   | { id: string; method: "createWorker"; params: { worker: WorkerInput } }
   | { id: string; method: "updateWorker"; params: { worker: Worker } }
@@ -1130,6 +1131,8 @@ export interface CalypsoIpcApi {
   getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus>;
   ensureInferenceRuntime(): Promise<InferenceRuntimeStatus>;
   getInferenceRuntimeStatus(): Promise<InferenceRuntimeStatus>;
+  /** Warm resident primary (qwen3:8b) into VRAM with keep_alive; emits models.runtime.progress. */
+  preloadPrimaryModel(): Promise<void>;
   getModelStatus(): Promise<ModelStatus>;
   getAppInfo(): Promise<AppInfo>;
   /** Tray menu actions (new-command, etc.). */

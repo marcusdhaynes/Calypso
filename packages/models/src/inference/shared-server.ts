@@ -4,6 +4,11 @@
  * Calypso must NOT load a separate massive model per worker. All workers
  * share this server; VRAM-tight GPUs (RTX 4060 8 GB) default to low
  * concurrency and explicit model swap/unload.
+ *
+ * keep_alive note: Ollama's OpenAI-compatible `/v1/chat/completions` does NOT
+ * accept `keep_alive`. Model residence is maintained by OllamaAdmin native
+ * `/api/generate` warmup (preloadPrimaryModel on start + optional refresh
+ * after each complete/stream via `refreshKeepAliveAfterInference`).
  */
 import type {
   ChatCompletionChunk,
@@ -27,6 +32,12 @@ export interface SharedInferenceServerOptions {
   swapUnload?: boolean;
   /** Optional admin hooks (Ollama keep_alive / unload). */
   admin?: InferenceAdmin;
+  /**
+   * After each successful complete/stream, fire-and-forget admin.warmup(model)
+   * so the resident model's keep_alive timer is refreshed. Default true when
+   * admin is provided. Disable for non-Ollama backends.
+   */
+  refreshKeepAliveAfterInference?: boolean;
 }
 
 /** Thin admin surface for load/unload beyond OpenAI-compatible chat APIs. */
@@ -38,13 +49,14 @@ export interface InferenceAdmin {
 export interface OllamaAdminOptions {
   /** Native Ollama base (not /v1). Default http://127.0.0.1:11434 */
   baseUrl?: string;
-  /** keep_alive for warmup generate; default "10m". Use "0" to unload. */
+  /** keep_alive for warmup generate; default "10m". Use "0" to unload. Prefer "24h" for the resident primary. */
   keepAlive?: string;
 }
 
 /**
  * Ollama native API helpers (/api/generate keep_alive, /api/generate unload).
- * OpenAI-compatible /v1 does not expose unload — use this alongside the chat provider.
+ * OpenAI-compatible /v1 does not expose keep_alive or unload — use this
+ * alongside the chat provider (preloadPrimaryModel + SharedInferenceServer).
  */
 export class OllamaAdmin implements InferenceAdmin {
   private baseUrl: string;
@@ -103,6 +115,7 @@ export class SharedInferenceServer {
   private maxConcurrent: number;
   private swapUnload: boolean;
   private admin?: InferenceAdmin;
+  private refreshKeepAlive: boolean;
   private active = 0;
   private waiters: QueueWaiter[] = [];
   private _activeModel: string | null = null;
@@ -112,6 +125,8 @@ export class SharedInferenceServer {
     this.maxConcurrent = Math.max(1, opts.maxConcurrent ?? 1);
     this.swapUnload = opts.swapUnload ?? true;
     this.admin = opts.admin;
+    this.refreshKeepAlive =
+      opts.refreshKeepAliveAfterInference ?? !!opts.admin?.warmup;
   }
 
   /** Model name of the last acquired inference slot (best-effort). */
@@ -142,7 +157,9 @@ export class SharedInferenceServer {
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     const release = await this.acquire(request.model);
     try {
-      return await this.provider.complete(request);
+      const result = await this.provider.complete(request);
+      this.scheduleKeepAliveRefresh(request.model);
+      return result;
     } finally {
       release();
     }
@@ -157,9 +174,16 @@ export class SharedInferenceServer {
       for await (const chunk of this.provider.stream(request, signal)) {
         yield chunk;
       }
+      this.scheduleKeepAliveRefresh(request.model);
     } finally {
       release();
     }
+  }
+
+  /** Fire-and-forget keep_alive refresh via native OllamaAdmin warmup. */
+  private scheduleKeepAliveRefresh(model: string): void {
+    if (!this.refreshKeepAlive || !this.admin?.warmup) return;
+    void this.admin.warmup(model).catch(() => undefined);
   }
 
   private async acquire(

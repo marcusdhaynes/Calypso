@@ -20,6 +20,8 @@ import {
   recommendTaskClassRoutes,
   ensureInferenceRuntime,
   getInferenceRuntimeStatus,
+  preloadPrimaryModel,
+  PRIMARY_MODEL_KEEP_ALIVE,
   type FirstRunInferencePlan,
 } from "@calypso/models";
 import type {
@@ -70,12 +72,16 @@ function queuedProvider(
   base: ModelProvider,
   maxConcurrent: number
 ): ModelProvider {
-  const admin = base.id === "ollama" ? new OllamaAdmin() : undefined;
+  const admin =
+    base.id === "ollama"
+      ? new OllamaAdmin({ keepAlive: PRIMARY_MODEL_KEEP_ALIVE })
+      : undefined;
   const server = createSharedInferenceServer({
     provider: base,
     maxConcurrent,
     swapUnload: true,
     admin,
+    refreshKeepAliveAfterInference: !!admin,
   });
   return {
     id: base.id,
@@ -207,8 +213,21 @@ async function ensureBrowserRuntimeReady() {
  */
 async function ensureInferenceRuntimeReady() {
   const status = await ensureInferenceRuntime({ bus: orchestrator.bus });
-  if (status.state === "ready") void refreshModelStatus();
+  if (status.state === "ready") {
+    void refreshModelStatus();
+    // Models present — warm the resident primary in the background.
+    void preloadPrimaryModelReady();
+  }
   return status;
+}
+
+/**
+ * Warm qwen3:8b (or configured primary) into VRAM with keep_alive so first
+ * chat is ~0.4s TTFT instead of ~34s cold load. Non-blocking; emits
+ * models.runtime.progress starting→ready for Theriz's banner.
+ */
+async function preloadPrimaryModelReady(): Promise<void> {
+  await preloadPrimaryModel({ bus: orchestrator.bus });
 }
 
 async function ensureBrowserSession(workerId: string, projectId?: string): Promise<string> {
@@ -349,6 +368,11 @@ async function handle(req: CoreRequest): Promise<void> {
       }
       case "getInferenceRuntimeStatus": {
         respond({ id: req.id, ok: true, result: await getInferenceRuntimeStatus() });
+        return;
+      }
+      case "preloadPrimaryModel": {
+        await preloadPrimaryModelReady();
+        respond({ id: req.id, ok: true, result: null });
         return;
       }
       case "listWorkers":
@@ -571,3 +595,15 @@ async function handle(req: CoreRequest): Promise<void> {
 }
 
 // Core process online; database at CALYPSO_DATABASE_PATH / default.
+// Background: if Ollama is already up with the primary model pulled, warm it
+// into VRAM (non-blocking so UI can open). Emits models.runtime.progress for Theriz.
+void (async () => {
+  try {
+    const status = await getInferenceRuntimeStatus();
+    if (status.ollamaReachable) {
+      await preloadPrimaryModelReady();
+    }
+  } catch {
+    /* never crash startup on preload failure */
+  }
+})();
