@@ -96,3 +96,11 @@ Worker, WorkerStatus, AutonomyLevel, Team, Project, Artifact, Conversation, Mess
 - Real user mouse/keyboard input, or Pause/Stop/Take Control, aborts the in-flight action immediately and sets the session to `user_controlling` / `paused` / `stopped`. Only one worker drives the mouse at a time; others wait in order.
 - Contract addition: `ControlFrame` and the `control.frame` event (live view frames, JPEG data URLs, ~2 fps while watched).
 - Off Windows the package uses `StubPowerShellHost`, which returns `host_unavailable`. Tests: `npm test -w @calypso/windows-control`.
+
+## Browser (`@calypso/browser`, Spin)
+
+- `createBrowserControl({ dataRoot })` returns `{ manager, tools }`. Register `tools` with core; call `manager.openSession({ workerId, projectId })` before a worker browses and pass `sessionId` into every tool call; `await browser.dispose()` on quit.
+- Tools: `browser.navigate` (network / `browser_offorigin_nav` when leaving the allow-list), `browser.click` / `browser.type` (write), `browser.extract` / `browser.snapshot` (read), `browser.newTab` (network), `browser.upload` / `browser.download` (dedicated classes). All call the PermissionGate first.
+- DomLocator-first (`role` / `label` / `text` / `css` / `testId` / `xpath`). Each `BrowserAction` returns an `ActionResult` with verify-after-act.
+- One Chromium process, persistent storage per session under `dataRoot/<sessionId>/`. Headless by default; set `CALYPSO_BROWSER_HEADED=1` for a visible window.
+- Smoke: `node packages/browser/test/smoke.mjs` (after `npm run build -w @calypso/browser` and `npx playwright install chromium`).
