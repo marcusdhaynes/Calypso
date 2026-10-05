@@ -570,6 +570,24 @@ export type ControlSessionCommand =
   | { type: "takeControl"; sessionId: ControlSessionId }
   | { type: "returnControl"; sessionId: ControlSessionId };
 
+/**
+ * Live view frame pushed while a control session is watched (~2 fps).
+ * JPEG (or similar) as a data URL for the renderer; cursor overlay optional.
+ */
+export interface ControlFrame {
+  mimeType: string;
+  width: number;
+  height: number;
+  /** Downscale factor applied by the capturer (1 = native). */
+  scale?: number;
+  /** Top-left of the captured region in screen coords. */
+  origin?: { x: number; y: number };
+  /** Inline image for the live view (data:image/jpeg;base64,...). */
+  dataUrl?: string;
+  /** Cursor position in screen coords when known. */
+  cursor?: { x: number; y: number };
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -798,6 +816,7 @@ export type CalypsoEvent =
     }
   | { type: "control.session.updated"; session: ControlSession }
   | { type: "control.session.command"; command: ControlSessionCommand }
+  | { type: "control.frame"; sessionId: ControlSessionId; frame: ControlFrame; at: number }
   | { type: "control.action"; sessionId: ControlSessionId; actionId: ActionId; summary: string; at: number }
   | { type: "control.action.result"; sessionId: ControlSessionId; result: ActionResult }
   /** Live screen frame for the computer view; only published while frame streaming is on. */
@@ -829,14 +848,101 @@ export interface EventBus {
  *   - the same protocol can later be served over localhost WebSocket
  *     so the shell is swappable and the UI stays responsive
  */
+/** Partial worker fields accepted by create/update IPC. */
+export type WorkerInput = Omit<Worker, "createdAt" | "updatedAt" | "status"> & {
+  status?: WorkerStatus;
+};
+
+export type TeamInput = Omit<Team, "createdAt" | "updatedAt"> & {
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+export type ProjectInput = Omit<Project, "createdAt" | "updatedAt"> & {
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+export type ConversationInput = Omit<Conversation, "createdAt" | "updatedAt"> & {
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+export interface ModelStatus {
+  ready: boolean;
+  providerId?: string;
+  displayName?: string;
+  message?: string;
+}
+
+export interface AppInfo {
+  name: string;
+  version: string;
+  platform: string;
+  modelStatus: ModelStatus;
+  windowsControlAvailable: boolean;
+}
+
+/**
+ * First-run plan view shape shared with the renderer (mirrors models planFirstRunInference
+ * output, without Node-only types leaking into the preload bridge).
+ */
+export interface FirstRunPlan {
+  gpuDetected: boolean;
+  gpuName?: string;
+  vramGb?: number;
+  cpuCores: number;
+  totalMemoryGb: number;
+  modelsToDownload: Array<{
+    model: string;
+    purpose: string;
+    estimatedDownloadMb: number;
+    usedBy: string[];
+  }>;
+  embedding: { model: string; estimatedDownloadMb: number; notes: string };
+  notes: string[];
+  visionSwapPolicy: string;
+}
+
 export type CoreRequest =
   | { id: string; method: "getAppInfo"; params?: undefined }
+  | { id: string; method: "getModelStatus"; params?: undefined }
+  | { id: string; method: "getFirstRunPlan"; params?: undefined }
   | { id: string; method: "listWorkers"; params?: undefined }
+  | { id: string; method: "createWorker"; params: { worker: WorkerInput } }
+  | { id: string; method: "updateWorker"; params: { worker: Worker } }
+  | { id: string; method: "listTeams"; params?: undefined }
+  | { id: string; method: "createTeam"; params: { team: TeamInput } }
+  | { id: string; method: "updateTeam"; params: { team: Team } }
+  | { id: string; method: "listProjects"; params?: undefined }
+  | { id: string; method: "createProject"; params: { project: ProjectInput } }
+  | { id: string; method: "updateProject"; params: { project: Project } }
+  | { id: string; method: "listConversations"; params?: undefined }
+  | {
+      id: string;
+      method: "createConversation";
+      params: { conversation: ConversationInput };
+    }
+  | {
+      id: string;
+      method: "updateConversation";
+      params: { conversation: Conversation };
+    }
+  | {
+      id: string;
+      method: "listMessages";
+      params: { conversationId: ConversationId };
+    }
   | { id: string; method: "getTaskGraph"; params?: undefined }
   | {
       id: string;
       method: "sendMessage";
-      params: { conversationId: ConversationId; content: string };
+      params: {
+        conversationId: ConversationId;
+        content: string;
+        /** Optional worker to address; otherwise first conversation participant. */
+        workerId?: WorkerId;
+      };
     }
   | {
       id: string;
@@ -847,23 +953,63 @@ export type CoreRequest =
       id: string;
       method: "controlCommand";
       params: { command: ControlSessionCommand };
-    };
+    }
+  | { id: string; method: "watchFrames"; params?: undefined }
+  | { id: string; method: "unwatchFrames"; params?: undefined }
+  | { id: string; method: "stopAll"; params?: undefined }
+  | { id: string; method: "pauseWorkers"; params?: undefined }
+  | { id: string; method: "resumeWorkers"; params?: undefined };
 
 export type CoreResponse =
   | { id: string; ok: true; result: unknown }
   | { id: string; ok: false; error: string };
 
+/** Token stream for assistant replies (in addition to CalypsoEvent pushes). */
+export type CoreStreamPush = {
+  channel: "stream";
+  conversationId: ConversationId;
+  messageId: MessageId;
+  delta: string;
+  done: boolean;
+  workerId?: WorkerId;
+};
+
 export type CorePush =
-  | { channel: "event"; event: CalypsoEvent };
+  | { channel: "event"; event: CalypsoEvent }
+  | CoreStreamPush;
 
 export interface CalypsoIpcApi {
   onEvent(handler: (event: CalypsoEvent) => void): () => void;
+  onStream(handler: (push: CoreStreamPush) => void): () => void;
   listWorkers(): Promise<Worker[]>;
+  createWorker(worker: WorkerInput): Promise<Worker>;
+  updateWorker(worker: Worker): Promise<Worker>;
+  listTeams(): Promise<Team[]>;
+  createTeam(team: TeamInput): Promise<Team>;
+  updateTeam(team: Team): Promise<Team>;
+  listProjects(): Promise<Project[]>;
+  createProject(project: ProjectInput): Promise<Project>;
+  updateProject(project: Project): Promise<Project>;
+  listConversations(): Promise<Conversation[]>;
+  createConversation(conversation: ConversationInput): Promise<Conversation>;
+  updateConversation(conversation: Conversation): Promise<Conversation>;
+  listMessages(conversationId: ConversationId): Promise<Message[]>;
   getTaskGraph(): Promise<TaskGraph>;
-  sendMessage(conversationId: ConversationId, content: string): Promise<Message>;
+  sendMessage(
+    conversationId: ConversationId,
+    content: string,
+    workerId?: WorkerId
+  ): Promise<Message>;
   resolvePermission(requestId: string, allow: boolean): Promise<void>;
   controlCommand(command: ControlSessionCommand): Promise<void>;
-  getAppInfo(): Promise<{ name: string; version: string; platform: string }>;
+  watchFrames(): Promise<void>;
+  unwatchFrames(): Promise<void>;
+  stopAll(): Promise<void>;
+  pauseWorkers(): Promise<void>;
+  resumeWorkers(): Promise<void>;
+  getFirstRunPlan(): Promise<FirstRunPlan>;
+  getModelStatus(): Promise<ModelStatus>;
+  getAppInfo(): Promise<AppInfo>;
 }
 
 declare global {
