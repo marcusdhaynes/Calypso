@@ -130,6 +130,10 @@ function maybeNotify(event: CalypsoEvent): void {
     show("Calypso", `Task failed: ${event.task.title}${event.task.error ? ` — ${event.task.error}` : ""}`);
   } else if (event.type === "permission.asked") {
     show("Calypso — approval needed", event.reason || `Worker wants to run ${event.toolCall.toolName}`);
+  } else if (event.type === "tool.result" && !event.result.ok) {
+    const name = event.result.toolName || "tool";
+    const err = event.result.error ? ` — ${event.result.error}` : "";
+    show("Calypso — step failed", `${name}${err}`);
   }
 }
 

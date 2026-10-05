@@ -331,17 +331,37 @@ export class Orchestrator {
       at: Date.now(),
     });
     try {
+      this.bus.publish({
+        type: "tool.progress",
+        progress: {
+          toolCallId: toolCall.id,
+          toolName: tool.name,
+          workerId: worker.id,
+          message: `Running ${tool.name}…`,
+          percent: 0,
+        },
+      });
       const result = await tool.execute(toolCall.params, {
         toolCallId: toolCall.id,
         workerId: worker.id,
         worker,
         taskId: toolCall.taskId,
         gate: this.gate,
-        onProgress: (progress) => this.bus.publish({ type: "tool.progress", progress }),
+        onProgress: (progress) =>
+          this.bus.publish({
+            type: "tool.progress",
+            progress: {
+              ...progress,
+              toolName: progress.toolName ?? tool.name,
+              workerId: progress.workerId ?? worker.id,
+            },
+          }),
       });
 
       let finalResult: ToolResult = {
         ...result,
+        toolName: result.toolName ?? tool.name,
+        workerId: result.workerId ?? worker.id,
         durationMs: result.durationMs || Date.now() - started,
       };
       if (verify) {
@@ -367,6 +387,8 @@ export class Orchestrator {
       // back to the model as a failed tool result so it can recover.
       const failed: ToolResult = {
         toolCallId: toolCall.id,
+        toolName: tool.name,
+        workerId: worker.id,
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         durationMs: Date.now() - started,

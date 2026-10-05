@@ -33,3 +33,6 @@ export type { RuntimeProgressBannerProps, RuntimeProgress } from "./RuntimeProgr
 
 export { ArtifactsPanel } from "./ArtifactsPanel.js";
 export type { ArtifactsPanelProps } from "./ArtifactsPanel.js";
+
+export { StepProgressRail } from "./StepProgressRail.js";
+export type { StepProgressRailProps, StepProgressItem, StepProgressStatus } from "./StepProgressRail.js";

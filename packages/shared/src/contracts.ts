@@ -389,6 +389,9 @@ export type ToolPermissionLevel =
 
 export interface ToolProgress {
   toolCallId: ToolCallId;
+  /** Filled by the orchestrator when publishing bus events. */
+  toolName?: string;
+  workerId?: WorkerId;
   message: string;
   percent?: number;
   data?: unknown;
@@ -434,6 +437,9 @@ export interface ToolCall {
 
 export interface ToolResult {
   toolCallId: ToolCallId;
+  /** Filled by the orchestrator when publishing bus events. */
+  toolName?: string;
+  workerId?: WorkerId;
   ok: boolean;
   output?: unknown;
   error?: string;

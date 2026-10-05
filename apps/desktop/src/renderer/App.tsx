@@ -1,6 +1,6 @@
 import { Markdown } from "./Markdown";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { Artifact, BrowserRuntimeProgress, CalypsoSettings, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import type { Artifact, BrowserRuntimeProgress, CalypsoSettings, ControlFrame, ControlSession, FirstRunPlan, InferenceRuntimeProgress, InferenceRuntimeStatus, Message, ModelStatus, Routine, Team, ToolCall, ToolProgress, ToolResult, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   ArtifactsPanel,
@@ -11,12 +11,14 @@ import {
   PermissionToast,
   RuntimeProgressBanner,
   Sidebar,
+  StepProgressRail,
   WorkerCard,
   colors,
   typography,
   type FirstRunConsentOptions,
   type FirstRunPlanView,
   type SidebarNavId,
+  type StepProgressItem,
 } from "@calypso/ui";
 
 const SETUP_KEY = "calypso.setup.complete";
@@ -70,6 +72,17 @@ interface PermissionAsk {
   reason: string;
 }
 
+interface StepChip {
+  toolCallId: string;
+  toolName: string;
+  workerId?: WorkerId;
+  message: string;
+  status: StepProgressItem["status"];
+  percent?: number;
+  error?: string;
+  updatedAt: number;
+}
+
 function planToView(plan: FirstRunPlan): FirstRunPlanView {
   return {
     gpuDetected: plan.gpuDetected,
@@ -97,6 +110,54 @@ export function App() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [permissionAsk, setPermissionAsk] = useState<PermissionAsk | null>(null);
+  const [stepChips, setStepChips] = useState<StepChip[]>([]);
+  const stepClearTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const upsertStepFromProgress = useCallback((progress: ToolProgress) => {
+    const toolCallId = progress.toolCallId;
+    setStepChips((prev) => {
+      const next: StepChip = {
+        toolCallId,
+        toolName: progress.toolName ?? prev.find((s) => s.toolCallId === toolCallId)?.toolName ?? "tool",
+        workerId: progress.workerId ?? prev.find((s) => s.toolCallId === toolCallId)?.workerId,
+        message: progress.message,
+        status: "running",
+        percent: progress.percent,
+        updatedAt: Date.now(),
+      };
+      const rest = prev.filter((s) => s.toolCallId !== toolCallId);
+      return [...rest, next].slice(-6);
+    });
+  }, []);
+
+  const upsertStepFromResult = useCallback((result: ToolResult) => {
+    const toolCallId = result.toolCallId;
+    setStepChips((prev) => {
+      const existing = prev.find((s) => s.toolCallId === toolCallId);
+      const next: StepChip = {
+        toolCallId,
+        toolName: result.toolName ?? existing?.toolName ?? "tool",
+        workerId: result.workerId ?? existing?.workerId,
+        message: result.ok ? existing?.message ?? "Done" : result.error ?? "Failed",
+        status: result.ok ? "ok" : "failed",
+        percent: result.ok ? 100 : existing?.percent,
+        error: result.ok ? undefined : result.error,
+        updatedAt: Date.now(),
+      };
+      const rest = prev.filter((s) => s.toolCallId !== toolCallId);
+      return [...rest, next].slice(-6);
+    });
+    const prevTimer = stepClearTimers.current.get(toolCallId);
+    if (prevTimer) clearTimeout(prevTimer);
+    // Keep failures longer so Marcus can read them; clear successes quickly.
+    const delay = result.ok ? 4000 : 12000;
+    const t = setTimeout(() => {
+      setStepChips((prev) => prev.filter((s) => s.toolCallId !== toolCallId));
+      stepClearTimers.current.delete(toolCallId);
+    }, delay);
+    stepClearTimers.current.set(toolCallId, t);
+  }, []);
+
   const [controlSession, setControlSession] = useState<ControlSession | null>(null);
   const [controlFrame, setControlFrame] = useState<ControlFrame | null>(null);
   const watchingFrames = useRef(false);
@@ -323,6 +384,12 @@ export function App() {
           percent: s.state === "ready" ? 100 : undefined,
           message: s.message,
         });
+      }
+      if (event.type === "tool.progress") {
+        upsertStepFromProgress(event.progress);
+      }
+      if (event.type === "tool.result") {
+        upsertStepFromResult(event.result);
       }
     });
 
@@ -1081,6 +1148,19 @@ export function App() {
         </div>
 
         {nav === "artifacts" || nav === "settings" ? null : (
+        <>
+        <StepProgressRail
+          steps={stepChips.map((s) => ({
+            toolCallId: s.toolCallId,
+            toolName: s.toolName,
+            workerName: s.workerId ? workers.find((w) => w.id === s.workerId)?.name : undefined,
+            message: s.message,
+            status: s.status,
+            percent: s.percent,
+            error: s.error,
+          }))}
+          style={{ marginBottom: 8 }}
+        />
         <ChatComposer
           onSend={onSend}
           disabled={modelWarming}
@@ -1101,6 +1181,7 @@ export function App() {
                   : "Message Calypso…"
           }
         />
+        </>
         )}
       </AppShell>
 
