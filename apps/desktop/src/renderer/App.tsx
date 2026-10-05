@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import type { FirstRunPlan, Message, ToolCall, Worker, WorkerId } from "@calypso/shared";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import type { FirstRunPlan, Message, ModelStatus, ToolCall, Worker, WorkerId } from "@calypso/shared";
 import {
   AppShell,
   Avatar,
@@ -55,6 +55,7 @@ interface ChatLine {
   role: "user" | "worker" | "system";
   name?: string;
   content: string;
+  streaming?: boolean;
 }
 
 interface PermissionAsk {
@@ -91,6 +92,8 @@ export function App() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [permissionAsk, setPermissionAsk] = useState<PermissionAsk | null>(null);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const streamingIds = useRef(new Set<string>());
   const [lines, setLines] = useState<ChatLine[]>([
     {
       id: "welcome",
@@ -111,6 +114,11 @@ export function App() {
         .catch(() => undefined);
     }
 
+    void api.getModelStatus?.().then(setModelStatus).catch(() => undefined);
+    void api.getAppInfo?.().then((info) => {
+      if (info?.modelStatus) setModelStatus(info.modelStatus);
+    }).catch(() => undefined);
+
     if (api.listWorkers) {
       void api
         .listWorkers()
@@ -121,14 +129,17 @@ export function App() {
         .catch(() => undefined);
     }
 
-    return api.onEvent?.((event) => {
+    const offEvent = api.onEvent?.((event) => {
       if (event.type === "worker.status" || event.type === "worker.updated") {
         void api.listWorkers?.().then(setWorkers).catch(() => undefined);
       }
       if (event.type === "message.created") {
+        const m = event.message;
+        if (m.author.type === "user") return;
+        if (streamingIds.current.has(m.id)) return;
         setLines((prev) => {
-          if (prev.some((l) => l.id === event.message.id)) return prev;
-          return [...prev, messageToLine(event.message)];
+          if (prev.some((l) => l.id === m.id)) return prev;
+          return [...prev, messageToLine(m)];
         });
       }
       if (event.type === "permission.asked") {
@@ -143,6 +154,59 @@ export function App() {
         setPermissionAsk((cur) => (cur?.requestId === event.requestId ? null : cur));
       }
     });
+
+    const offStream = api.onStream?.((push) => {
+      streamingIds.current.add(push.messageId);
+      setLines((prev) => {
+        const idx = prev.findIndex((l) => l.id === push.messageId);
+        if (push.done) {
+          streamingIds.current.delete(push.messageId);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = {
+              ...copy[idx],
+              content: copy[idx].content + (push.delta || ""),
+              streaming: false,
+            };
+            return copy;
+          }
+          return [
+            ...prev,
+            {
+              id: push.messageId,
+              role: push.workerId ? "worker" : "system",
+              name: push.workerId,
+              content: push.delta || "",
+              streaming: false,
+            },
+          ];
+        }
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = {
+            ...copy[idx],
+            content: copy[idx].content + push.delta,
+            streaming: true,
+          };
+          return copy;
+        }
+        return [
+          ...prev,
+          {
+            id: push.messageId,
+            role: push.workerId ? "worker" : "system",
+            name: push.workerId,
+            content: push.delta,
+            streaming: true,
+          },
+        ];
+      });
+    });
+
+    return () => {
+      offEvent?.();
+      offStream?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -270,6 +334,20 @@ export function App() {
         titlebar={
           <span style={{ WebkitAppRegion: "drag" } as CSSProperties}>
             Calypso
+            {modelStatus && !modelStatus.ready ? (
+              <span
+                style={
+                  {
+                    marginLeft: 12,
+                    color: colors.warning,
+                    fontSize: 12,
+                    WebkitAppRegion: "no-drag",
+                  } as CSSProperties
+                }
+              >
+                Model unavailable
+              </span>
+            ) : null}
           </span>
         }
         sidebar={
@@ -377,7 +455,7 @@ export function App() {
                   {line.name}
                 </div>
               ) : null}
-              {line.content}
+              {line.content}{line.streaming ? "▍" : ""}
             </article>
           ))}
         </div>
