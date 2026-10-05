@@ -103,7 +103,9 @@
       "main": "dist/main/index.js"
     },
     "electronVersion": "33.4.11",
-    "asar": true,
+    "asar": {
+      "smartUnpack": true
+    },
     "extraResources": [
       {
         "from": "../../packages/windows-control/host",
@@ -116,9 +118,6 @@
         "from": "resources/tray-icon.png",
         "to": "tray-icon.png"
       }
-    ],
-    "asarUnpack": [
-      "**/node_modules/better-sqlite3/**/*"
     ]
   },
   "author": "Calypso"

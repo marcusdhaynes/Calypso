@@ -48,6 +48,6 @@ Hold the **Hold** button in the composer (or focus it via `Ctrl+Shift+Space`). U
 1. Prefer `npm install --ignore-scripts` at the monorepo root, then:
    - `node node_modules/electron/install.js` (download Electron)
    - `npm run pack:win -w @calypso/desktop`
-2. `pack:win` stages the vendored `native/win32-x64/better_sqlite3.node`, packs with `asarUnpack` for better-sqlite3, then patches the unpacked binary.
+2. `pack:win` stages the vendored `native/win32-x64/better_sqlite3.node` so `asar.smartUnpack` unpacks the `.node`, then `patch-win-native` overwrites it with the vendored Win PE. Avoid `asarUnpack` globs here — they break monorepo paths outside `apps/desktop`.
 3. Do **not** rely on `electron-builder install-app-deps` during `npm install` on Windows — it can prune the workspace tree under npm 12. Use `npm run rebuild:native -w @calypso/desktop` only when you intentionally want a native rebuild.
 4. If `allowScripts` is enabled (npm 12), allow at least `electron` and `esbuild`, or use `--ignore-scripts` + manual Electron install as above.
