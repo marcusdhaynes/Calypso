@@ -376,6 +376,12 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+  // Windows UIA: appendSwitch alone is not enough on Electron 33 — the renderer
+  // stays at Chrome Legacy Window / D3D with only 2 UIA descendants unless this
+  // is also enabled (verified on DESKTOP-J47PDQK against HEAD 5cadc11).
+  if (process.platform === "win32") {
+    app.setAccessibilitySupportEnabled(true);
+  }
   startCoreProcess();
   registerIpc();
   createTray();
