@@ -20,9 +20,9 @@
     "test:integration": "node test/integration-smoke.mjs",
     "rebuild:native": "electron-builder install-app-deps",
     "pack:win:dir": "electron-builder --win --x64 --dir && node scripts/patch-win-native.mjs",
-    "postinstall": "electron-builder install-app-deps || true",
-    "pack:win:nsis": "electron-builder --win nsis --x64",
-    "pack:win:portable": "electron-builder --win portable --x64"
+    "postinstall": "node -e \"try{require('child_process').execSync('npx electron-builder install-app-deps',{stdio:'inherit'})}catch(e){process.exit(0)}\"",
+    "pack:win:nsis": "electron-builder --win nsis --x64 && node scripts/patch-win-native.mjs",
+    "pack:win:portable": "electron-builder --win portable --x64 && node scripts/patch-win-native.mjs"
   },
   "dependencies": {
     "@calypso/browser": "*",
