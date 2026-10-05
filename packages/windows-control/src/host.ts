@@ -46,10 +46,24 @@ export interface ProcessPowerShellHostOptions {
 
 /** Resolve the bundled host script; in a packaged app it must be asar-unpacked. */
 export function defaultHostScriptPath(): string {
-  if (process.env.CALYPSO_PS_HOST_SCRIPT) return process.env.CALYPSO_PS_HOST_SCRIPT;
+  if (process.env.CALYPSO_PS_HOST_SCRIPT && existsSync(process.env.CALYPSO_PS_HOST_SCRIPT)) {
+    return process.env.CALYPSO_PS_HOST_SCRIPT;
+  }
   const here = dirname(fileURLToPath(import.meta.url));
-  const p = join(here, "..", "host", "calypso-host.ps1");
-  return p.replace(`app.asar${"\\"}`, `app.asar.unpacked${"\\"}`).replace("app.asar/", "app.asar.unpacked/");
+  const unpack = (p: string) =>
+    p.replace(`app.asar${"\\"}`, `app.asar.unpacked${"\\"}`).replace("app.asar/", "app.asar.unpacked/");
+  const candidates = [
+    process.env.CALYPSO_PS_HOST_SCRIPT,
+    typeof (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath === "string"
+      ? join((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath!, "windows-control-host", "calypso-host.ps1")
+      : undefined,
+    join(here, "..", "host", "calypso-host.ps1"),
+  ].filter((p): p is string => !!p);
+  for (const raw of candidates) {
+    const p = unpack(raw);
+    if (existsSync(p)) return p;
+  }
+  return unpack(candidates[0] ?? join(here, "..", "host", "calypso-host.ps1"));
 }
 
 interface Pending {

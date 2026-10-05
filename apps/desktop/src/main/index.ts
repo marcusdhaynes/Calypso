@@ -32,6 +32,11 @@ function databasePath(): string {
   return path.join(app.getPath("userData"), "calypso.sqlite");
 }
 
+function windowsHostScriptPath(): string {
+  // electron-builder copies packages/windows-control/host → resources/windows-control-host
+  return path.join(process.resourcesPath, "windows-control-host", "calypso-host.ps1");
+}
+
 function startCoreProcess(): void {
   coreProc = utilityProcess.fork(coreScriptPath(), [], {
     serviceName: "calypso-core",
@@ -39,6 +44,8 @@ function startCoreProcess(): void {
     env: {
       ...process.env,
       CALYPSO_DATABASE_PATH: databasePath(),
+      // Packaged builds keep the PS host outside the asar; point the core at it.
+      CALYPSO_PS_HOST_SCRIPT: process.env.CALYPSO_PS_HOST_SCRIPT || windowsHostScriptPath(),
     },
   });
 
