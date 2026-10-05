@@ -570,24 +570,6 @@ export type ControlSessionCommand =
   | { type: "takeControl"; sessionId: ControlSessionId }
   | { type: "returnControl"; sessionId: ControlSessionId };
 
-/**
- * Live view frame pushed while a control session is watched (~2 fps).
- * JPEG (or similar) as a data URL for the renderer; cursor overlay optional.
- */
-export interface ControlFrame {
-  mimeType: string;
-  width: number;
-  height: number;
-  /** Downscale factor applied by the capturer (1 = native). */
-  scale?: number;
-  /** Top-left of the captured region in screen coords. */
-  origin?: { x: number; y: number };
-  /** Inline image for the live view (data:image/jpeg;base64,...). */
-  dataUrl?: string;
-  /** Cursor position in screen coords when known. */
-  cursor?: { x: number; y: number };
-}
-
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -816,11 +798,10 @@ export type CalypsoEvent =
     }
   | { type: "control.session.updated"; session: ControlSession }
   | { type: "control.session.command"; command: ControlSessionCommand }
+  /** Live screen frame for the computer view; only published while frame streaming is on. */
   | { type: "control.frame"; sessionId: ControlSessionId; frame: ControlFrame; at: number }
   | { type: "control.action"; sessionId: ControlSessionId; actionId: ActionId; summary: string; at: number }
   | { type: "control.action.result"; sessionId: ControlSessionId; result: ActionResult }
-  /** Live screen frame for the computer view; only published while frame streaming is on. */
-  | { type: "control.frame"; sessionId: ControlSessionId; frame: ControlFrame; at: number }
   | { type: "project.updated"; project: Project }
   | { type: "artifact.created"; artifact: Artifact }
   | { type: "system.error"; message: string; cause?: string; at: number };
@@ -1010,7 +991,10 @@ export interface CalypsoIpcApi {
   getFirstRunPlan(): Promise<FirstRunPlan>;
   getModelStatus(): Promise<ModelStatus>;
   getAppInfo(): Promise<AppInfo>;
+  /** Tray menu actions (new-command, etc.). */
+  onTray(handler: (payload: { action: string }) => void): () => void;
 }
+
 
 declare global {
   interface Window {

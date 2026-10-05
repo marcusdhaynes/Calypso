@@ -66,10 +66,17 @@ const api: CalypsoIpcApi = {
   getFirstRunPlan: () => ipcRenderer.invoke("calypso:getFirstRunPlan"),
   getModelStatus: () => ipcRenderer.invoke("calypso:getModelStatus"),
   getAppInfo: () => ipcRenderer.invoke("calypso:getAppInfo"),
+  onTray(handler: (payload: { action: string }) => void) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { action: string }) => {
+      handler(payload);
+    };
+    ipcRenderer.on("calypso:tray", listener);
+    return () => {
+      ipcRenderer.removeListener("calypso:tray", listener);
+    };
+  },
 };
+
 
 contextBridge.exposeInMainWorld("calypso", api);
 
-ipcRenderer.on("calypso:tray", (_e, payload: { action: string }) => {
-  window.dispatchEvent(new CustomEvent("calypso:tray", { detail: payload }));
-});

@@ -24,3 +24,6 @@ export type { ChatComposerProps } from "./ChatComposer.js";
 
 export { FirstRunWizard } from "./FirstRunWizard.js";
 export type { FirstRunWizardProps, FirstRunPlanView, FirstRunModelRow } from "./FirstRunWizard.js";
+
+export { PermissionToast } from "./PermissionToast.js";
+export type { PermissionToastProps } from "./PermissionToast.js";
