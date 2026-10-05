@@ -20,7 +20,9 @@
     "test:integration": "node test/integration-smoke.mjs",
     "rebuild:native": "electron-builder install-app-deps",
     "pack:win:dir": "electron-builder --win --x64 --dir",
-    "postinstall": "electron-builder install-app-deps || true"
+    "postinstall": "electron-builder install-app-deps || true",
+    "pack:win:nsis": "electron-builder --win nsis --x64",
+    "pack:win:portable": "electron-builder --win portable --x64"
   },
   "dependencies": {
     "@calypso/browser": "*",
@@ -54,6 +56,7 @@
     },
     "files": [
       "dist/**/*",
+      "resources/**/*",
       "package.json",
       "!**/*.map",
       "!**/node_modules/playwright/.local-browsers/**",
@@ -83,7 +86,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Calypso-Setup-${version}.${ext}"
+      "artifactName": "Calypso-Setup-${version}.${ext}",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Calypso",
+      "uninstallDisplayName": "Calypso"
     },
     "portable": {
       "artifactName": "Calypso-Portable-${version}.${ext}"
@@ -103,6 +110,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/tray-icon.png",
+        "to": "tray-icon.png"
       }
     ]
   },

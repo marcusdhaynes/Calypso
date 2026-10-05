@@ -2,7 +2,7 @@
 
 Windows desktop agent orchestration platform. Electron + React + TypeScript (Vite) shell, TypeScript core with a persistent task graph, local/cloud model routing, and tool packages for Windows control, browser, and system ops.
 
-Packaged later with **electron-builder** into `Calypso.exe` (NSIS installer + portable). Target: Windows x64, `productName` / `executableName`: **Calypso**.
+Packaged with **electron-builder** into NSIS + portable (`Calypso-Setup-*.exe` / `Calypso-Portable-*.exe`). Target: Windows x64, `productName` / `executableName`: **Calypso**. Pack on Windows — see [`apps/desktop/PACKAGING.md`](apps/desktop/PACKAGING.md).
 
 ## Architecture
 

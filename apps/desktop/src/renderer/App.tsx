@@ -335,6 +335,14 @@ export function App() {
         setNav("new");
         setSetupDone(true);
       }
+      if (payload.action === "ptt-focus") {
+        setNav("home");
+        setSetupDone(true);
+        requestAnimationFrame(() => {
+          const el = document.querySelector<HTMLElement>('[data-testid="chat-ptt"]');
+          el?.focus();
+        });
+      }
     });
   }, []);
 
@@ -868,6 +876,13 @@ export function App() {
         <ChatComposer
           onSend={onSend}
           disabled={modelWarming}
+          enableVoice
+          onVoiceError={(message) => {
+            setLines((prev) => [
+              ...prev,
+              { id: `sys-${Date.now()}`, role: "system", content: message },
+            ]);
+          }}
           placeholder={
             modelWarming
               ? "Warming up local model…"

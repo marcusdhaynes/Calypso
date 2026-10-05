@@ -8,8 +8,10 @@ import {
   Notification,
   ipcMain,
   utilityProcess,
+  type NativeImage,
   type UtilityProcess,
 } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CalypsoEvent, CorePush, CoreRequest, CoreResponse } from "@calypso/shared";
@@ -111,23 +113,23 @@ function maybeNotify(event: CalypsoEvent): void {
   if (process.platform !== "win32" && process.platform !== "linux") return;
   if (!Notification.isSupported()) return;
 
+  const show = (title: string, body: string) => {
+    const n = new Notification({ title, body });
+    n.on("click", () => showMainWindow());
+    n.show();
+  };
+
+  // Skip toast spam when the main window is focused.
+  if (mainWindow?.isFocused()) return;
+
   if (event.type === "task.status" && event.status === "completed") {
-    new Notification({ title: "Calypso", body: `Task completed: ${event.taskId}` }).show();
+    show("Calypso", `Task completed: ${event.taskId}`);
   } else if (event.type === "task.updated" && event.task.status === "completed") {
-    new Notification({
-      title: "Calypso",
-      body: `Task completed: ${event.task.title}`,
-    }).show();
+    show("Calypso", `Task completed: ${event.task.title}`);
   } else if (event.type === "task.updated" && event.task.status === "failed") {
-    new Notification({
-      title: "Calypso",
-      body: `Task failed: ${event.task.title}${event.task.error ? ` — ${event.task.error}` : ""}`,
-    }).show();
+    show("Calypso", `Task failed: ${event.task.title}${event.task.error ? ` — ${event.task.error}` : ""}`);
   } else if (event.type === "permission.asked") {
-    new Notification({
-      title: "Calypso — approval needed",
-      body: event.reason || `Worker wants to run ${event.toolCall.toolName}`,
-    }).show();
+    show("Calypso — approval needed", event.reason || `Worker wants to run ${event.toolCall.toolName}`);
   }
 }
 
@@ -181,9 +183,27 @@ function createWindow(): void {
   });
 }
 
+function resolveTrayIcon(): NativeImage {
+  const candidates = [
+    path.join(process.resourcesPath, "tray-icon.png"),
+    path.join(__dirname, "../../resources/tray-icon.png"),
+    path.join(app.getAppPath(), "resources/tray-icon.png"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        const img = nativeImage.createFromPath(candidate);
+        if (!img.isEmpty()) return img;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return nativeImage.createEmpty();
+}
+
 function createTray(): void {
-  // 1x1 transparent PNG fallback; Electron accepts empty image on Linux/CI.
-  const icon = nativeImage.createEmpty();
+  const icon = resolveTrayIcon();
   tray = new Tray(icon);
   tray.setToolTip("Calypso");
   const contextMenu = Menu.buildFromTemplate([
@@ -229,6 +249,14 @@ function registerHotkeys(): void {
   });
   if (!ok) {
     console.warn("Failed to register global stop hotkey Ctrl+Alt+Esc");
+  }
+  // Focus composer for push-to-talk (renderer starts SpeechRecognition on this cue).
+  const ptt = globalShortcut.register("CommandOrControl+Shift+Space", () => {
+    showMainWindow();
+    mainWindow?.webContents.send("calypso:tray", { action: "ptt-focus" });
+  });
+  if (!ptt) {
+    console.warn("Failed to register PTT hotkey Ctrl+Shift+Space");
   }
 }
 
