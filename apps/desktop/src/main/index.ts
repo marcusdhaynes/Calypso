@@ -15,6 +15,10 @@ import { fileURLToPath } from "node:url";
 import type { CalypsoEvent, CorePush, CoreRequest, CoreResponse } from "@calypso/shared";
 
 const __filename = fileURLToPath(import.meta.url);
+// Expose renderer a11y tree to Windows UIA so LiveComputerView Pause/Resume/Stop
+// can be found by name (Trice automation / host findElement).
+app.commandLine.appendSwitch("force-renderer-accessibility");
+
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;

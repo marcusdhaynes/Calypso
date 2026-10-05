@@ -37,6 +37,8 @@ export function LiveComputerView({
   return (
     <section
       className={className}
+      aria-label="Live computer view"
+      data-testid="live-computer-view"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -84,6 +86,9 @@ export function LiveComputerView({
             <Button
               size="sm"
               variant="secondary"
+              aria-label="Pause"
+              data-testid="live-pause"
+              data-calypso-command="pause"
               onClick={() => onCommand({ type: "pause", sessionId: session.id })}
             >
               Pause
@@ -93,6 +98,9 @@ export function LiveComputerView({
             <Button
               size="sm"
               variant="primary"
+              aria-label="Resume"
+              data-testid="live-resume"
+              data-calypso-command="resume"
               onClick={() => onCommand({ type: "resume", sessionId: session.id })}
             >
               Resume
@@ -102,6 +110,9 @@ export function LiveComputerView({
             <Button
               size="sm"
               variant="secondary"
+              aria-label="Take Control"
+              data-testid="live-take-control"
+              data-calypso-command="takeControl"
               onClick={() => onCommand({ type: "takeControl", sessionId: session.id })}
             >
               Take Control
@@ -111,6 +122,9 @@ export function LiveComputerView({
             <Button
               size="sm"
               variant="primary"
+              aria-label="Return Control"
+              data-testid="live-return-control"
+              data-calypso-command="returnControl"
               onClick={() => onCommand({ type: "returnControl", sessionId: session.id })}
             >
               Return Control
@@ -120,6 +134,9 @@ export function LiveComputerView({
             <Button
               size="sm"
               variant="danger"
+              aria-label="Stop"
+              data-testid="live-stop"
+              data-calypso-command="stop"
               onClick={() => onCommand({ type: "stop", sessionId: session.id })}
             >
               Stop
