@@ -137,7 +137,7 @@ function createWindow(): void {
     title: "Calypso",
     show: true,
     webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
+      preload: path.join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -145,12 +145,17 @@ function createWindow(): void {
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL ?? process.env.ELECTRON_RENDERER_URL;
+  const rendererHtml = path.join(__dirname, "../renderer/index.html");
   if (devUrl) {
     void mainWindow.loadURL(devUrl);
-  } else if (!app.isPackaged && process.env.NODE_ENV !== "production") {
+  } else if (
+    !app.isPackaged &&
+    process.env.NODE_ENV !== "production" &&
+    process.env.CALYPSO_USE_VITE === "1"
+  ) {
     void mainWindow.loadURL("http://127.0.0.1:5173");
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void mainWindow.loadFile(rendererHtml);
   }
 
   mainWindow.on("close", (e) => {

@@ -3,8 +3,8 @@
   "compilerOptions": {
     "outDir": "dist/preload",
     "rootDir": "src/preload",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
     "types": ["node"],
     "composite": false,
     "declaration": false,
