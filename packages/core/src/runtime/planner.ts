@@ -149,7 +149,8 @@ export class Planner {
 
     const prompt = [
       "You are a team lead. Produce a JSON plan for the goal.",
-      "Respond with ONLY a JSON object: {\"steps\":[{\"id\":\"step_1\",\"title\":\"...\",\"description\":\"...\",\"taskClass\":\"normal\",\"dependsOnStepIds\":[],\"suggestedRole\":\"optional\",\"suggestedWorkerId\":\"optional\"}]}",
+      "Respond with ONLY a JSON object: {\"steps\":[{\"id\":\"step_1\",\"title\":\"...\",\"description\":\"...\",\"taskClass\":\"normal\",\"dependsOnStepIds\":[],\"suggestedRole\":\"optional\",\"suggestedWorkerId\":\"optional\",\"successCriteria\":\"one observable check that proves the step is done\"}]}",
+      "Every step needs successCriteria: a concrete, checkable outcome (e.g. \"file report.md exists and lists 5 items\"), not \"done well\".",
       `taskClass must be one of: ${TASK_CLASSES.join(", ")}`,
       "Keep 1-5 steps. Prefer parallel steps when independent.",
       `Team roster:\n${roster}`,
@@ -223,6 +224,10 @@ export function parsePlanJson(raw: string): PlanStep[] {
         dependsOnStepIds,
         suggestedRole: s.suggestedRole ? String(s.suggestedRole) : undefined,
         suggestedWorkerId: s.suggestedWorkerId ? String(s.suggestedWorkerId) : undefined,
+        successCriteria:
+          typeof s.successCriteria === "string" && s.successCriteria.trim()
+            ? s.successCriteria.trim()
+            : undefined,
       });
     }
     return steps;

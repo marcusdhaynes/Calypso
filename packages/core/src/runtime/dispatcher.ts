@@ -1,6 +1,8 @@
 import type { CoreStreamPush, Task, TaskId, WorkerId } from "@calypso/shared";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { WorkerRuntime } from "./worker-runtime.js";
+import { checkStep, MAX_STEP_ATTEMPTS } from "./step-checker.js";
+import { newId } from "./ids.js";
 
 export interface DispatcherOptions {
   /** Max concurrent tasks across all workers (shared local GPU). Default 2. */
@@ -107,6 +109,8 @@ export class TaskDispatcher {
       completedAt: undefined,
       startedAt: undefined,
       retryCount: (t.retryCount ?? 0) + 1,
+      checkAttempts: 0,
+      checkFeedback: undefined,
       updatedAt: Date.now(),
     });
     this.orch.bus.publish({ type: "task.updated", task: updated });
@@ -171,6 +175,15 @@ export class TaskDispatcher {
       if (result.cancelled || ctrl.signal.aborted) {
         this.orch.failTaskCancelled(task.id);
       } else if (result.ok) {
+        // Plan steps get checked against their success criteria and retried (max 3 tries).
+        if (task.parentId) {
+          const check = await checkStep(this.orch, task, result);
+          if (this.closed || ctrl.signal.aborted) return;
+          if (!check.ok) {
+            this.handleFailedCheck(task, check.reason);
+            return;
+          }
+        }
         this.orch.completeTask(task.id, result.content);
       } else {
         // One automatic retry on transient failure if never retried by dispatcher
@@ -201,6 +214,41 @@ export class TaskDispatcher {
         }
         queueMicrotask(() => void this.tick());
       }
+    }
+  }
+
+  private handleFailedCheck(task: Task, reason: string): void {
+    const current = this.orch.tasks.get(task.id) ?? task;
+    const attempts = (current.checkAttempts ?? 0) + 1;
+    const note = (text: string) => {
+      if (!current.conversationId) return;
+      this.orch.recordMessage({
+        id: newId("msg"),
+        conversationId: current.conversationId,
+        author: { type: "system" },
+        content: text,
+        taskId: current.id,
+        createdAt: Date.now(),
+      });
+    };
+    if (attempts < MAX_STEP_ATTEMPTS) {
+      const updated = this.orch.tasks.upsert({
+        ...current,
+        status: "pending",
+        checkAttempts: attempts,
+        checkFeedback: reason,
+        result: undefined,
+        error: undefined,
+        startedAt: undefined,
+        updatedAt: Date.now(),
+      });
+      this.orch.bus.publish({ type: "task.updated", task: updated });
+      this.orch.bus.publish({ type: "task.status", taskId: current.id, status: "pending", at: Date.now() });
+      note(`Check failed for "${current.title}": ${reason} Retrying (attempt ${attempts + 1} of ${MAX_STEP_ATTEMPTS}).`);
+    } else {
+      this.orch.tasks.upsert({ ...current, checkAttempts: attempts, checkFeedback: reason, updatedAt: Date.now() });
+      note(`"${current.title}" failed its check ${MAX_STEP_ATTEMPTS} times: ${reason}`);
+      this.orch.failTask(current.id, `Check failed after ${MAX_STEP_ATTEMPTS} attempts: ${reason}`);
     }
   }
 

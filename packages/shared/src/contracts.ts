@@ -330,6 +330,12 @@ export interface Task {
   teamId?: TeamId;
   /** Dispatcher retry attempts so far (Anky). */
   retryCount?: number;
+  /** What "done" looks like for this step; checked after the worker finishes. */
+  successCriteria?: string;
+  /** Check attempts so far for plan steps (plan -> check -> retry, max 3). */
+  checkAttempts?: number;
+  /** Why the previous attempt failed its check; fed to the next attempt. */
+  checkFeedback?: string;
   taskClass: TaskClass;
   result?: string;
   error?: string;
@@ -371,6 +377,8 @@ export interface PlanStep {
   suggestedRole?: string;
   /** Preferred concrete worker when known. */
   suggestedWorkerId?: WorkerId;
+  /** Observable condition that proves the step is done. */
+  successCriteria?: string;
 }
 
 // ---------------------------------------------------------------------------

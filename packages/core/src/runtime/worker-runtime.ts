@@ -29,6 +29,8 @@ export interface WorkerRuntimeResult {
   toolCallIds: string[];
   error?: string;
   cancelled?: boolean;
+  /** Per-call tool outcomes in order, for the step checker. */
+  toolOutcomes?: { toolName: string; ok: boolean; error?: string }[];
 }
 
 const DEFAULT_MAX_ITERATIONS = 8;
@@ -75,6 +77,7 @@ export class WorkerRuntime {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const conversationId = opts.conversationId ?? task.conversationId;
     const toolCallIds: string[] = [];
+    const toolOutcomes: NonNullable<WorkerRuntimeResult["toolOutcomes"]> = [];
 
     const controller = new AbortController();
     const onAbort = () => controller.abort();
@@ -177,7 +180,7 @@ export class WorkerRuntime {
           }
 
           await this.writeEpisode(worker, task, assistantText || fullContent);
-          return { ok: true, content: assistantText || fullContent, toolCallIds };
+          return { ok: true, content: assistantText || fullContent, toolCallIds, toolOutcomes };
         }
 
         // Observe: append assistant tool_calls turn, execute each tool, append tool results
@@ -205,6 +208,7 @@ export class WorkerRuntime {
           toolCallIds.push(toolCall.id);
 
           const result = await this.orch.executeToolCall(worker, toolCall);
+          toolOutcomes.push({ toolName: toolCall.toolName, ok: result.ok, error: result.error });
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,

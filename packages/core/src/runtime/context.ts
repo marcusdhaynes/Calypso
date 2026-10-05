@@ -98,6 +98,10 @@ export async function buildWorkerContext(
     worker.instructions,
     `Current task: ${task.title}`,
     task.description,
+    task.successCriteria ? `Done when: ${task.successCriteria}` : "",
+    task.checkFeedback
+      ? `Your previous attempt failed its check: ${task.checkFeedback}\nFix that specifically this time.`
+      : "",
     memBlock,
     tools.length
       ? [

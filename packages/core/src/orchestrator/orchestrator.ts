@@ -276,6 +276,7 @@ export class Orchestrator {
           planId: plan.id,
           projectId: plan.projectId,
           taskClass: step.taskClass,
+          successCriteria: step.successCriteria,
         },
         { deferDispatch: true }
       );
