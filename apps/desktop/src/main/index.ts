@@ -1,4 +1,15 @@
-import { app, BrowserWindow, ipcMain, utilityProcess, type UtilityProcess } from "electron";
+import {
+  app,
+  BrowserWindow,
+  Tray,
+  Menu,
+  nativeImage,
+  globalShortcut,
+  Notification,
+  ipcMain,
+  utilityProcess,
+  type UtilityProcess,
+} from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CalypsoEvent, CorePush, CoreRequest, CoreResponse } from "@calypso/shared";
@@ -8,6 +19,8 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let coreProc: UtilityProcess | null = null;
+let tray: Tray | null = null;
+let quitting = false;
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 let reqSeq = 0;
 
@@ -15,18 +28,36 @@ function coreScriptPath(): string {
   return path.join(__dirname, "../core-process/index.js");
 }
 
+function databasePath(): string {
+  return path.join(app.getPath("userData"), "calypso.sqlite");
+}
+
 function startCoreProcess(): void {
   coreProc = utilityProcess.fork(coreScriptPath(), [], {
     serviceName: "calypso-core",
     stdio: "pipe",
+    env: {
+      ...process.env,
+      CALYPSO_DATABASE_PATH: databasePath(),
+    },
   });
 
   coreProc.on("message", (msg: CoreResponse | CorePush) => {
-    if ("channel" in msg && msg.channel === "event") {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send("calypso:event", msg.event as CalypsoEvent);
+    if ("channel" in msg) {
+      if (msg.channel === "event") {
+        const event = msg.event as CalypsoEvent;
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send("calypso:event", event);
+        }
+        maybeNotify(event);
+        return;
       }
-      return;
+      if (msg.channel === "stream") {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send("calypso:stream", msg);
+        }
+        return;
+      }
     }
     const res = msg as CoreResponse;
     const waiter = pending.get(res.id);
@@ -40,12 +71,16 @@ function startCoreProcess(): void {
     console.error(`calypso-core exited with code ${code}`);
     coreProc = null;
   });
+
+  coreProc.stdout?.on("data", (buf: Buffer) => {
+    console.log(`[core] ${buf.toString().trimEnd()}`);
+  });
+  coreProc.stderr?.on("data", (buf: Buffer) => {
+    console.error(`[core] ${buf.toString().trimEnd()}`);
+  });
 }
 
-function callCore<T = unknown>(
-  method: CoreRequest["method"],
-  params?: unknown
-): Promise<T> {
+function callCore<T = unknown>(method: CoreRequest["method"], params?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!coreProc) {
       reject(new Error("core utilityProcess not running"));
@@ -61,11 +96,46 @@ function callCore<T = unknown>(
   });
 }
 
+function maybeNotify(event: CalypsoEvent): void {
+  if (process.platform !== "win32" && process.platform !== "linux") return;
+  if (!Notification.isSupported()) return;
+
+  if (event.type === "task.status" && event.status === "completed") {
+    new Notification({ title: "Calypso", body: `Task completed: ${event.taskId}` }).show();
+  } else if (event.type === "task.updated" && event.task.status === "completed") {
+    new Notification({
+      title: "Calypso",
+      body: `Task completed: ${event.task.title}`,
+    }).show();
+  } else if (event.type === "task.updated" && event.task.status === "failed") {
+    new Notification({
+      title: "Calypso",
+      body: `Task failed: ${event.task.title}${event.task.error ? ` — ${event.task.error}` : ""}`,
+    }).show();
+  } else if (event.type === "permission.asked") {
+    new Notification({
+      title: "Calypso — approval needed",
+      body: event.reason || `Worker wants to run ${event.toolCall.toolName}`,
+    }).show();
+  }
+}
+
+function showMainWindow(): void {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1280,
+    height: 840,
     title: "Calypso",
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -83,42 +153,159 @@ function createWindow(): void {
     void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 
+  mainWindow.on("close", (e) => {
+    if (quitting) return;
+    // Close-to-tray: keep core running in the background.
+    e.preventDefault();
+    mainWindow?.hide();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
 }
 
+function createTray(): void {
+  // 1x1 transparent PNG fallback; Electron accepts empty image on Linux/CI.
+  const icon = nativeImage.createEmpty();
+  tray = new Tray(icon);
+  tray.setToolTip("Calypso");
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: "Open",
+      click: () => showMainWindow(),
+    },
+    {
+      label: "Pause workers",
+      click: () => {
+        void callCore("pauseWorkers").catch((err) => console.error(err));
+      },
+    },
+    {
+      label: "Resume workers",
+      click: () => {
+        void callCore("resumeWorkers").catch((err) => console.error(err));
+      },
+    },
+    {
+      label: "New command",
+      click: () => {
+        showMainWindow();
+        mainWindow?.webContents.send("calypso:tray", { action: "new-command" });
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        quitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.on("double-click", () => showMainWindow());
+}
+
+function registerHotkeys(): void {
+  const ok = globalShortcut.register("CommandOrControl+Alt+Escape", () => {
+    void callCore("stopAll").catch((err) => console.error("stopAll failed", err));
+  });
+  if (!ok) {
+    console.warn("Failed to register global stop hotkey Ctrl+Alt+Esc");
+  }
+}
+
 function registerIpc(): void {
-  ipcMain.handle("calypso:getAppInfo", () => callCore("getAppInfo"));
-  ipcMain.handle("calypso:listWorkers", () => callCore("listWorkers"));
-  ipcMain.handle("calypso:getTaskGraph", () => callCore("getTaskGraph"));
-  ipcMain.handle(
-    "calypso:sendMessage",
-    (_e, conversationId: string, content: string) =>
-      callCore("sendMessage", { conversationId, content })
-  );
-  ipcMain.handle(
-    "calypso:resolvePermission",
-    (_e, requestId: string, allow: boolean) =>
-      callCore("resolvePermission", { requestId, allow })
-  );
-  ipcMain.handle("calypso:controlCommand", (_e, command: unknown) =>
-    callCore("controlCommand", { command })
-  );
+  const bridge = (method: CoreRequest["method"]) => (_e: Electron.IpcMainInvokeEvent, ...args: unknown[]) => {
+    // Map invoke args → params object per method
+    switch (method) {
+      case "sendMessage":
+        return callCore(method, {
+          conversationId: args[0],
+          content: args[1],
+          workerId: args[2],
+        });
+      case "resolvePermission":
+        return callCore(method, { requestId: args[0], allow: args[1] });
+      case "controlCommand":
+        return callCore(method, { command: args[0] });
+      case "createWorker":
+        return callCore(method, { worker: args[0] });
+      case "updateWorker":
+        return callCore(method, { worker: args[0] });
+      case "createTeam":
+        return callCore(method, { team: args[0] });
+      case "updateTeam":
+        return callCore(method, { team: args[0] });
+      case "createProject":
+        return callCore(method, { project: args[0] });
+      case "updateProject":
+        return callCore(method, { project: args[0] });
+      case "createConversation":
+        return callCore(method, { conversation: args[0] });
+      case "updateConversation":
+        return callCore(method, { conversation: args[0] });
+      case "listMessages":
+        return callCore(method, { conversationId: args[0] });
+      default:
+        return callCore(method);
+    }
+  };
+
+  const methods: CoreRequest["method"][] = [
+    "getAppInfo",
+    "getModelStatus",
+    "getFirstRunPlan",
+    "listWorkers",
+    "createWorker",
+    "updateWorker",
+    "listTeams",
+    "createTeam",
+    "updateTeam",
+    "listProjects",
+    "createProject",
+    "updateProject",
+    "listConversations",
+    "createConversation",
+    "updateConversation",
+    "listMessages",
+    "getTaskGraph",
+    "sendMessage",
+    "resolvePermission",
+    "controlCommand",
+    "watchFrames",
+    "unwatchFrames",
+    "stopAll",
+    "pauseWorkers",
+    "resumeWorkers",
+  ];
+  for (const m of methods) {
+    ipcMain.handle(`calypso:${m}`, bridge(m));
+  }
 }
 
 app.whenReady().then(() => {
   startCoreProcess();
   registerIpc();
+  createTray();
+  registerHotkeys();
   createWindow();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
 });
 
+app.on("before-quit", () => {
+  quitting = true;
+  globalShortcut.unregisterAll();
+  coreProc?.kill();
+  coreProc = null;
+});
+
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    coreProc?.kill();
+  // Keep running in tray on all platforms while not quitting.
+  if (quitting && process.platform !== "darwin") {
     app.quit();
   }
 });
