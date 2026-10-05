@@ -661,8 +661,28 @@ function Invoke-ComputerAction($a) {
         $res.processId = $proc.Id
         $wait = 5000; if ($a.waitMs) { $wait = [int]$a.waitMs }
         $h = Wait-ForWindow $proc.Id $wait
-        if ($h -ne [IntPtr]::Zero) { $res.window = Get-WindowInfo $h; $res.verified = $true }
-        else { $res.verified = (-not $proc.HasExited) }
+        # Win11 Store apps (e.g. notepad.exe stub) exit and reopen under a new PID.
+        if ($h -eq [IntPtr]::Zero) {
+          $leaf = [IO.Path]::GetFileNameWithoutExtension([string]$a.path)
+          $deadline = [DateTime]::UtcNow.AddMilliseconds($wait)
+          while ([DateTime]::UtcNow -lt $deadline -and $h -eq [IntPtr]::Zero) {
+            foreach ($cand in @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+              $_.ProcessName -like "$leaf*" -and $_.MainWindowHandle -ne 0
+            })) {
+              $h = [IntPtr]$cand.MainWindowHandle
+              if ($h -ne [IntPtr]::Zero) { $res.processId = $cand.Id; break }
+            }
+            if ($h -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+          }
+        }
+        if ($h -ne [IntPtr]::Zero) {
+          [CalypsoNative]::ForceForeground($h) | Out-Null
+          $res.window = Get-WindowInfo $h
+          $res.verified = $true
+          $res.processId = $res.window.processId
+        } else {
+          $res.verified = (-not $proc.HasExited)
+        }
       }
       return $res
     }
