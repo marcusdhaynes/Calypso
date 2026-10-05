@@ -50,7 +50,7 @@ SQLite via **better-sqlite3** in `@calypso/core` (`CalypsoDatabase` + `SqliteMem
 - **Worker messaging**: `sendWorkerMessage` → `bus.chat` + persisted Message; built-in tools `team.message` (read) and `team.delegate` (write).
 - **Desktop entry**: prefer `orchestrator.handleUserMessage({ conversationId, content, workerId? })` + `orchestrator.setStreamHandler(push => …)` instead of a monolithic one-shot prompt. Also: `pauseWorkers` / `resumeWorkers` / `cancelTask` / `retryTask` on the Orchestrator.
 
-**Contract additions (Anky, additive):** `Task.conversationId?` / `teamId?` / `retryCount?`; `PlanStep.suggestedRole?` / `suggestedWorkerId?`; `ChatMessage.tool_calls?` + `ChatToolCall`; CoreRequest `cancelTask` / `retryTask` (CalypsoIpcApi methods optional until Tyran wires them).
+**Contract additions (Anky, additive):** `Task.conversationId?` / `teamId?` / `retryCount?`; `PlanStep.suggestedRole?` / `suggestedWorkerId?`; `ChatMessage.tool_calls?` + `ChatToolCall`; CoreRequest / CalypsoIpcApi `cancelTask` / `retryTask` (wired through desktop IPC).
 
 ### Models
 

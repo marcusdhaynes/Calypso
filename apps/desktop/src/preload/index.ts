@@ -9,6 +9,7 @@ import type {
   CoreStreamPush,
   Project,
   ProjectInput,
+  TaskId,
   Team,
   TeamInput,
   Worker,
@@ -63,6 +64,8 @@ const api: CalypsoIpcApi = {
   stopAll: () => ipcRenderer.invoke("calypso:stopAll"),
   pauseWorkers: () => ipcRenderer.invoke("calypso:pauseWorkers"),
   resumeWorkers: () => ipcRenderer.invoke("calypso:resumeWorkers"),
+  cancelTask: (taskId: TaskId) => ipcRenderer.invoke("calypso:cancelTask", taskId),
+  retryTask: (taskId: TaskId) => ipcRenderer.invoke("calypso:retryTask", taskId),
   openBrowserSession: (workerId, projectId) =>
     ipcRenderer.invoke("calypso:openBrowserSession", workerId, projectId),
   shutdown: () => ipcRenderer.invoke("calypso:shutdown"),

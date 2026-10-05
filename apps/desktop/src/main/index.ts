@@ -255,6 +255,10 @@ function registerIpc(): void {
         return callCore(method, { conversationId: args[0] });
       case "openBrowserSession":
         return callCore(method, { workerId: args[0], projectId: args[1] });
+      case "cancelTask":
+        return callCore(method, { taskId: args[0] });
+      case "retryTask":
+        return callCore(method, { taskId: args[0] });
       default:
         return callCore(method);
     }
@@ -290,6 +294,8 @@ function registerIpc(): void {
     "stopAll",
     "pauseWorkers",
     "resumeWorkers",
+    "cancelTask",
+    "retryTask",
     "openBrowserSession",
     "shutdown",
   ];

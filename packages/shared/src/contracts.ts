@@ -1118,9 +1118,8 @@ export interface CalypsoIpcApi {
   stopAll(): Promise<void>;
   pauseWorkers(): Promise<void>;
   resumeWorkers(): Promise<void>;
-  /** Optional until Tyran wires Orchestrator.cancelTask / retryTask through IPC. */
-  cancelTask?(taskId: TaskId): Promise<Task | undefined>;
-  retryTask?(taskId: TaskId): Promise<Task | undefined>;
+  cancelTask(taskId: TaskId): Promise<Task | undefined>;
+  retryTask(taskId: TaskId): Promise<Task | undefined>;
   openBrowserSession(
     workerId: WorkerId,
     projectId?: ProjectId

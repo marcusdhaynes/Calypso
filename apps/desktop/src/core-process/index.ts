@@ -18,7 +18,6 @@ import {
   planFirstRunInference,
   probeHardware,
   recommendTaskClassRoutes,
-  buildCompletionRequest,
   ensureInferenceRuntime,
   getInferenceRuntimeStatus,
   type FirstRunInferencePlan,
@@ -32,14 +31,12 @@ import type {
   CoreRequest,
   CoreResponse,
   FirstRunPlan,
-  Message,
   ModelProvider,
   ModelStatus,
   Project,
   ProjectInput,
   Team,
   TeamInput,
-  Worker,
   WorkerId,
   WorkerInput,
 } from "@calypso/shared";
@@ -55,10 +52,6 @@ function respond(msg: CoreResponse): void {
 
 function push(msg: CorePush): void {
   process.parentPort?.postMessage(msg);
-}
-
-function newId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function resolveDatabasePath(): string {
@@ -171,6 +164,11 @@ orchestrator.bus.subscribe((event: CalypsoEvent) => {
   push({ channel: "event", event });
 });
 
+// Bridge agent-loop token streams onto the existing channel:"stream" IPC.
+orchestrator.setStreamHandler((streamPush) => {
+  push(streamPush);
+});
+
 // ---- Tools ----
 const userDataRoot = path.dirname(databasePath);
 const browserControl: BrowserControl = createBrowserControl({
@@ -230,7 +228,6 @@ for (const tool of createSystemTools()) {
 
 let windowsControl: WindowsControl | null = null;
 let unwatchFrames: (() => void) | null = null;
-let workersPaused = false;
 
 if (isWindows) {
   try {
@@ -303,170 +300,6 @@ function ensureConversation(id: string, workerId?: WorkerId): Conversation {
     title: "Conversation",
     participantWorkerIds: workerId ? [workerId] : [],
   });
-}
-
-async function streamWorkerReply(
-  conversationId: string,
-  worker: Worker,
-  userContent: string
-): Promise<void> {
-  const messageId = newId("msg");
-  const status = await refreshModelStatus();
-  if (!status.ready) {
-    const content =
-      "The local model runtime (Ollama) is unavailable. Start Ollama and pull the recommended models from Setup, then try again.";
-    const message: Message = {
-      id: messageId,
-      conversationId,
-      author: { type: "system" },
-      content,
-      createdAt: Date.now(),
-    };
-    orchestrator.recordMessage(message);
-    push({
-      channel: "stream",
-      conversationId,
-      messageId,
-      delta: content,
-      done: true,
-    });
-    return;
-  }
-
-  if (workersPaused) {
-    const content = "Workers are paused. Resume from the tray menu to continue.";
-    const message: Message = {
-      id: messageId,
-      conversationId,
-      author: { type: "system" },
-      content,
-      createdAt: Date.now(),
-    };
-    orchestrator.recordMessage(message);
-    push({
-      channel: "stream",
-      conversationId,
-      messageId,
-      delta: content,
-      done: true,
-    });
-    return;
-  }
-
-  try {
-    await ensureBrowserSession(worker.id, worker.projectId);
-  } catch {
-    /* browser may be unavailable — chat still works */
-  }
-
-  orchestrator.workers.setStatus(worker.id, "thinking");
-  orchestrator.bus.publish({
-    type: "worker.status",
-    workerId: worker.id,
-    status: "thinking",
-    at: Date.now(),
-  });
-
-  let full = "";
-  try {
-    const taskClass =
-      typeof worker.preferredModel === "string" &&
-      ["simple", "normal", "code", "vision", "reasoning", "frontier"].includes(
-        worker.preferredModel
-      )
-        ? (worker.preferredModel as "normal")
-        : "normal";
-    const { provider, model } = await router.resolve(taskClass, worker.preferredModel);
-    const history = orchestrator.database?.listMessages(conversationId) ?? [];
-    const messages = [
-      {
-        role: "system" as const,
-        content: [
-          `You are ${worker.name}, a Calypso worker.`,
-          `Role: ${worker.role}`,
-          `Personality: ${worker.personality}`,
-          worker.instructions,
-          browserSessions.get(worker.id)
-            ? `Browser sessionId for tools: ${browserSessions.get(worker.id)}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      },
-      ...history.slice(-20).map((m) => ({
-        role:
-          m.author.type === "user"
-            ? ("user" as const)
-            : m.author.type === "worker"
-              ? ("assistant" as const)
-              : ("system" as const),
-        content: m.content,
-      })),
-      { role: "user" as const, content: userContent },
-    ];
-
-    const request = buildCompletionRequest(
-      { model, messages, temperature: 0.7, stream: true },
-      taskClass
-    );
-
-    for await (const chunk of provider.stream(request)) {
-      const delta = chunk.choices?.[0]?.delta?.content;
-      if (!delta) continue;
-      full += delta;
-      push({
-        channel: "stream",
-        conversationId,
-        messageId,
-        delta,
-        done: false,
-        workerId: worker.id,
-      });
-    }
-
-    const message: Message = {
-      id: messageId,
-      conversationId,
-      author: { type: "worker", workerId: worker.id },
-      content: full || "(empty reply)",
-      createdAt: Date.now(),
-    };
-    orchestrator.recordMessage(message);
-    push({
-      channel: "stream",
-      conversationId,
-      messageId,
-      delta: "",
-      done: true,
-      workerId: worker.id,
-    });
-  } catch (err) {
-    const content = `Model error: ${err instanceof Error ? err.message : String(err)}`;
-    const message: Message = {
-      id: messageId,
-      conversationId,
-      author: { type: "system" },
-      content,
-      createdAt: Date.now(),
-    };
-    orchestrator.recordMessage(message);
-    push({
-      channel: "stream",
-      conversationId,
-      messageId,
-      delta: content,
-      done: true,
-      workerId: worker.id,
-    });
-  } finally {
-    orchestrator.workers.setStatus(worker.id, "idle");
-    orchestrator.bus.publish({
-      type: "worker.status",
-      workerId: worker.id,
-      status: "idle",
-      at: Date.now(),
-    });
-  }
 }
 
 process.parentPort?.on("message", (event) => {
@@ -606,33 +439,23 @@ async function handle(req: CoreRequest): Promise<void> {
       case "sendMessage": {
         const { conversationId, content, workerId } = req.params;
         const conversation = ensureConversation(conversationId, workerId);
-        const message: Message = {
-          id: newId("msg"),
-          conversationId: conversation.id,
-          author: { type: "user" },
-          content,
-          createdAt: Date.now(),
-        };
-        orchestrator.recordMessage(message);
-        respond({ id: req.id, ok: true, result: message });
-
         const targetId =
           workerId ??
           conversation.participantWorkerIds[0] ??
           orchestrator.workers.list()[0]?.id;
-        const worker = targetId ? orchestrator.workers.get(targetId) : undefined;
-        if (worker) {
-          void streamWorkerReply(conversation.id, worker, content);
-        } else {
-          const sys: Message = {
-            id: newId("msg"),
-            conversationId: conversation.id,
-            author: { type: "system" },
-            content: "No worker available to reply. Create a worker first.",
-            createdAt: Date.now(),
-          };
-          orchestrator.recordMessage(sys);
+        if (targetId) {
+          const worker = orchestrator.workers.get(targetId);
+          if (worker) {
+            void ensureBrowserSession(worker.id, worker.projectId).catch(() => undefined);
+          }
         }
+        const { userMessage } = await orchestrator.handleUserMessage({
+          conversationId: conversation.id,
+          content,
+          workerId,
+          teamId: conversation.teamId,
+        });
+        respond({ id: req.id, ok: true, result: userMessage });
         return;
       }
       case "resolvePermission":
@@ -683,41 +506,31 @@ async function handle(req: CoreRequest): Promise<void> {
         respond({ id: req.id, ok: true, result: null });
         return;
       case "stopAll":
+        // Emergency stop: pause the agent dispatcher + halt Windows control sessions.
+        orchestrator.pauseWorkers();
         windowsControl?.controller.stopAll();
         respond({ id: req.id, ok: true, result: null });
         return;
       case "pauseWorkers":
-        workersPaused = true;
+        orchestrator.pauseWorkers();
         windowsControl?.controller.pauseAll();
-        for (const w of orchestrator.workers.list()) {
-          if (w.status !== "offline" && w.status !== "error") {
-            orchestrator.workers.setStatus(w.id, "waiting");
-            orchestrator.bus.publish({
-              type: "worker.status",
-              workerId: w.id,
-              status: "waiting",
-              at: Date.now(),
-            });
-          }
-        }
         respond({ id: req.id, ok: true, result: null });
         return;
       case "resumeWorkers":
-        workersPaused = false;
+        orchestrator.resumeWorkers();
         windowsControl?.controller.resumeAll();
-        for (const w of orchestrator.workers.list()) {
-          if (w.status === "waiting") {
-            orchestrator.workers.setStatus(w.id, "idle");
-            orchestrator.bus.publish({
-              type: "worker.status",
-              workerId: w.id,
-              status: "idle",
-              at: Date.now(),
-            });
-          }
-        }
         respond({ id: req.id, ok: true, result: null });
         return;
+      case "cancelTask": {
+        const task = orchestrator.cancelTask(req.params.taskId);
+        respond({ id: req.id, ok: true, result: task ?? null });
+        return;
+      }
+      case "retryTask": {
+        const task = orchestrator.retryTask(req.params.taskId);
+        respond({ id: req.id, ok: true, result: task ?? null });
+        return;
+      }
       case "openBrowserSession": {
         const { workerId, projectId } = req.params;
         const sessionId = await ensureBrowserSession(workerId, projectId);
