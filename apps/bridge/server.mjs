@@ -35,7 +35,7 @@ export function createCalypso(options={}){
  try{const old=JSON.parse(fs.readFileSync(lockFile,'utf8'));let alive=false;try{process.kill(old.pid,0);alive=true;}catch{}if(alive)throw Error('Calypso is already running for this data folder. Reuse the existing local engine.');fs.unlinkSync(lockFile);}catch(e){if(e.message?.includes('already running'))throw e;}
  fs.writeFileSync(lockFile,JSON.stringify({pid:process.pid,id:lockId}),{flag:'wx'});
  const stateFile=path.join(dataRoot,'state.json');
- let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):freshState();
+ let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8').replace(/^\uFEFF/,'')):freshState();
  let active=null,closed=false,chatActive=false,healthCache=null,healthAt=0;
  const children=new Set(),clients=new Set(),pairTokens=new Set();
  function config(){try{return JSON.parse(fs.readFileSync(configPath,'utf8').replace(/^\uFEFF/,''));}catch{return {};}}
@@ -124,17 +124,13 @@ export function createCalypso(options={}){
   if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
   const u=new URL(req.url,'http://'+host);const sameOrigin=!origin||origin==='http://'+host;
   if(req.method==='POST'&&!origin)return json(res,403,{error:'An explicit local Origin is required'});
-  if(u.pathname.startsWith('/api/')&&u.pathname!=='/api/status'&&!sameOrigin&&!pairTokens.has((req.headers.authorization||'').replace(/^Bearer /,'')))return json(res,401,{error:'Pair this browser with the local Calypso app first.'});
+  if(u.pathname.startsWith('/api/')&&u.pathname!=='/api/status'&&u.pathname!=='/api/launch'&&!sameOrigin&&!pairTokens.has((req.headers.authorization||'').replace(/^Bearer /,'')))return json(res,401,{error:'Pair this browser with the local Calypso app first.'});
   if(req.method==='GET'&&u.pathname==='/api/status')return json(res,200,await health());
   if(req.method==='GET'&&u.pathname==='/api/state'){if(Number(u.searchParams.get('revision'))===state.revision&&u.searchParams.has('revision'))return json(res,200,{unchanged:true,revision:state.revision});return json(res,200,publicState());}
   if(req.method==='GET'&&u.pathname==='/api/events'){res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.write(`data: ${state.revision}\n\n`);clients.add(res);req.on('close',()=>clients.delete(res));return;}
-  if(req.method==='POST'&&u.pathname==='/launch'){
-   // Allow only top-level, user-initiated project handoffs from our own hosted
-   // app. This does not relax the token requirement on any general API route.
-   if(origin!=='https://marcusdhaynes.github.io'||(req.headers['sec-fetch-mode']&&req.headers['sec-fetch-mode']!=='navigate')||(req.headers['sec-fetch-dest']&&req.headers['sec-fetch-dest']!=='document'))return json(res,403,{error:'Open this project from the Calypso app.'});
-   let form='';for await(const chunk of req){form+=chunk;if(form.length>250000)throw Error('Project handoff is too large.');}
-   const data=JSON.parse(new URLSearchParams(form).get('payload')||'{}');const project=await action('project.launch',data);
-   res.writeHead(303,{'Location':`http://${host}/#project=${encodeURIComponent(project.id)}`,'Cache-Control':'no-store'});res.end();return;
+  if(req.method==='POST'&&u.pathname==='/api/launch'){
+   if(origin!=='https://marcusdhaynes.github.io'||!String(req.headers['content-type']||'').startsWith('application/json'))return json(res,403,{error:'Start this project from the Calypso app.'});
+   const project=await action('project.launch',await read(req));return json(res,200,{projectId:project.id,status:project.status});
   }
   if(req.method==='POST'&&u.pathname==='/api/action'){const b=await read(req);return json(res,200,await action(b.type,b.data||{}));}
   if(req.method==='GET'&&u.pathname==='/api/artifacts')return json(res,200,state.projects.flatMap(files));

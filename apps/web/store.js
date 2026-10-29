@@ -11,10 +11,11 @@ export async function connect(){try{const status=await request('/api/status');co
 export async function refresh(){if(!workspace.connected)return;try{const s=await request('/api/state?revision='+workspace.state.revision);if(!s.unchanged){workspace.state=s;emit();}}catch{workspace.connected=false;workspace.state=local;emit();}}
 export async function importDrafts(){if(!workspace.connected)throw Error('Connect your computer first.');const result=await request('/api/action',{type:'workspace.import',data:{workers:local.workers,projects:local.projects,memories:local.memories}});await refresh();return result;}
 export function pair(){if(location.origin===workspace.base)return connect();const popup=window.open(workspace.base+'/pair?origin='+encodeURIComponent(location.origin),'calypso-pair','width=580,height=560');if(!popup)throw Error('Allow the connection window to open, or use the local app.');const listener=async e=>{if(e.origin!==workspace.base||e.source!==popup||e.data?.type!=='calypso-paired')return;workspace.token=e.data.token;sessionStorage.setItem('calypso.bridge.token',workspace.token);window.removeEventListener('message',listener);await connect();};window.addEventListener('message',listener);}
-// A user-triggered, project-scoped navigation; no general local-access token.
-export function launchLocally(project,projectAction='resume',instructions=''){
- const form=document.createElement('form');form.method='POST';form.action=ENDPOINT+'/launch';form.target='_self';form.hidden=true;
- const payload=document.createElement('input');payload.name='payload';payload.value=JSON.stringify({project,action:projectAction,instructions,workers:local.workers.filter(w=>project.workerIds.includes(w.id))});form.append(payload);document.body.append(form);form.submit();return Promise.resolve(project);
+// Project-only launch is trusted to this app's publisher origin. General local
+// APIs still require pairing; this endpoint returns only the selected project ID.
+export async function launchLocally(project,projectAction='resume',instructions=''){
+ const response=await fetch(ENDPOINT+'/api/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project,action:projectAction,instructions,workers:local.workers.filter(w=>project.workerIds.includes(w.id))}),signal:AbortSignal.timeout(15000)});
+ const result=await response.json();if(!response.ok)throw Error(result.error||'The local engine is starting. Try Start again shortly.');project.remoteId=result.projectId;saveLocal();location.assign(ENDPOINT+'/#project='+encodeURIComponent(result.projectId));return project;
 }
 export async function action(type,b={}){
  if(workspace.connected){const result=await request('/api/action',{type,data:b});await refresh();return result;}
