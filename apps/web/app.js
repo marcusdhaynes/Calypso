@@ -1,4 +1,4 @@
-import {workspace as W,action,subscribe,connect,refresh,request,chat,pair,exportWorkspace,importDrafts,localDraftCount} from './store.js';
+import {workspace as W,action,subscribe,connect,refresh,request,chat,pair,exportWorkspace,importDrafts,localDraftCount} from './store.js?v=20261029-3';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const initialRoute=location.hash.slice(1);let view=initialRoute.startsWith('project=')?'projects':initialRoute.startsWith('receive=')?'home':initialRoute||'home',projectId=initialRoute.startsWith('project=')?decodeURIComponent(initialRoute.slice(8)):null,conversationId=null,filter='all',query='',artifacts=[],browserTabs=[],browserError='',capture=null,chatAbort=null,installPrompt=null,modalType='',teamPreset=null;
 const roles={coordinator:'Planner',researcher:'Researcher',writer:'Builder',reviewer:'Reviewer'};
