@@ -10,3 +10,9 @@ out/
 release/
 coverage/
 .vite/
+
+.calypso-data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+state.json

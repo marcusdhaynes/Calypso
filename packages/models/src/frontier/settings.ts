@@ -36,18 +36,9 @@ export function toPublicSettings(
 ): { public: CalypsoSettings; stored: PersistedCalypsoSettings } {
   const base = defaultCalypsoSettings();
   const prev = persisted ?? {};
-  const nextEnabled =
-    update?.cloudModelsEnabled ??
-    update?.frontier?.enabled ??
-    prev.cloudModelsEnabled ??
-    prev.frontier?.enabled ??
-    base.cloudModelsEnabled;
+  const nextEnabled = false; // Free-only: ignore legacy and incoming cloud opt-ins.
 
-  let nextApiKey = prev.frontier?.apiKey;
-  if (update?.frontier && "apiKey" in update.frontier) {
-    const raw = update.frontier.apiKey;
-    nextApiKey = raw && raw.trim() ? raw.trim() : undefined;
-  }
+  const nextApiKey: string | undefined = undefined; // Never persist cloud credentials.
 
   const stored: PersistedCalypsoSettings = {
     cloudModelsEnabled: !!nextEnabled,
@@ -72,7 +63,7 @@ export function toPublicSettings(
       baseUrl: stored.frontier?.baseUrl ?? DEFAULT_FRONTIER_BASE_URL,
       modelId: stored.frontier?.modelId ?? DEFAULT_FRONTIER_MODEL_ID,
     },
-    hasCloudApiKey: hasCloudApiKeyAvailable(stored.frontier?.apiKey),
+    hasCloudApiKey: false,
   };
 
   return { public: pub, stored };

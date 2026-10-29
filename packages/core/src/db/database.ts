@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import type {
   Artifact,
   Conversation,
@@ -13,6 +14,34 @@ import type {
 } from "@calypso/shared";
 
 const SCHEMA_VERSION = 2;
+
+/** Keep the original SQLite schema usable on modern Node without a native rebuild. */
+function openCompatibleDatabase(filePath: string): Database.Database {
+  try {
+    return new Database(filePath);
+  } catch (error) {
+    if (!/bindings file|NODE_MODULE_VERSION|valid Win32|dlopen|Cannot find module/i.test(String(error))) throw error;
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
+    const native = new DatabaseSync(filePath);
+    const normalize = (row: Record<string, unknown> | undefined) => row && Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [key, value instanceof Uint8Array ? Buffer.from(value) : value])
+    );
+    return {
+      exec: (sql: string) => native.exec(sql),
+      pragma: (sql: string) => native.exec(`PRAGMA ${sql}`),
+      close: () => native.close(),
+      prepare: (sql: string) => {
+        const statement = native.prepare(sql);
+        const values = (args: unknown[]) => args.map(value => value === undefined ? null : value) as import("node:sqlite").SQLInputValue[];
+        return {
+          run: (...args: unknown[]) => statement.run(...values(args)),
+          get: (...args: unknown[]) => normalize(statement.get(...values(args))),
+          all: (...args: unknown[]) => statement.all(...values(args)).map(normalize),
+        };
+      },
+    } as unknown as Database.Database;
+  }
+}
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -118,7 +147,7 @@ export class CalypsoDatabase {
     if (opts.filePath !== ":memory:") {
       fs.mkdirSync(path.dirname(opts.filePath), { recursive: true });
     }
-    this.db = new Database(opts.filePath);
+    this.db = openCompatibleDatabase(opts.filePath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.migrate();

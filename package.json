@@ -1,19 +1,27 @@
 {
   "name": "calypso",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Calypso — Windows desktop agent orchestration platform",
+  "description": "Calypso \u00e2\u20ac\u201d a free-model-only OpenClaw workspace for web, PWA and desktop",
   "scripts": {
     "build": "npm run build -w @calypso/shared && npm run build -w @calypso/models && npm run build -w @calypso/tools-system && npm run build -w @calypso/windows-control && npm run build -w @calypso/browser && npm run build -w @calypso/core && npm run build -w @calypso/ui && npm run build -w @calypso/desktop",
-    "typecheck": "npm run typecheck -ws --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev -w @calypso/desktop",
-    "clean": "npm run clean -ws --if-present"
+    "clean": "npm run clean -ws --if-present",
+    "start": "node apps/bridge/server.mjs",
+    "build:web": "node scripts/build-web.mjs",
+    "test:web": "node --check apps/web/app.js && node --check apps/web/store.js && node --check apps/bridge/server.mjs && node --test apps/bridge/test/*.test.mjs",
+    "desktop": "electron apps/desktop/unified.cjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
+  ],
+  "devDependencies": {
+    "playwright-core": "^1.63.0",
+    "undici-types": "^6.21.0"
+  }
 }

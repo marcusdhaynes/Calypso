@@ -1,0 +1,56 @@
+name: Build, test & publish Calypso
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: calypso-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build preserved Calypso packages
+        run: npm run build
+      - run: npm run typecheck
+      - run: npm test -w @calypso/core
+      - run: npm test -w @calypso/windows-control
+      - run: node packages/models/test/free-only.mjs
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Syntax, runtime, persistence & free-model checks
+        run: npm run test:web
+      - name: Build lightweight web app
+        run: npm run build:web
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [verify, native-contracts]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy live Calypso app
+        id: deployment
+        uses: actions/deploy-pages@v4

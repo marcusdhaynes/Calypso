@@ -1,0 +1,1 @@
+{"name":"@calypso/web","version":"0.2.0","private":true,"type":"module","scripts":{"build":"node ../../scripts/build-web.mjs"}}

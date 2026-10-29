@@ -24,7 +24,7 @@ export interface DefaultModelRouterOptions {
 }
 
 function isCloudProviderId(id: string): boolean {
-  return CLOUD_PROVIDER_IDS.has(id);
+  return CLOUD_PROVIDER_IDS.has(id) || !["ollama", "llamacpp", "llama.cpp", "local", "fake", "test"].includes(id);
 }
 
 /**
@@ -42,7 +42,7 @@ export class DefaultModelRouter implements ModelRouter {
   private onFrontierFallback?: DefaultModelRouterOptions["onFrontierFallback"];
 
   constructor(opts: DefaultModelRouterOptions = {}) {
-    this.cloudModelsEnabled = opts.cloudModelsEnabled ?? false;
+    this.cloudModelsEnabled = false; // Calypso is free-local-model-only, even with legacy settings.
     this.onFrontierFallback = opts.onFrontierFallback;
   }
 
@@ -61,7 +61,7 @@ export class DefaultModelRouter implements ModelRouter {
 
   /** Master toggle for cloud frontier resolution (default false). */
   setCloudModelsEnabled(enabled: boolean): void {
-    this.cloudModelsEnabled = enabled;
+    this.cloudModelsEnabled = false; // Paid/cloud execution cannot be enabled.
   }
 
   getCloudModelsEnabled(): boolean {
@@ -88,7 +88,9 @@ export class DefaultModelRouter implements ModelRouter {
   }
 
   private resolveLocalNormal(): { provider: ModelProvider; model: string } {
-    const route = this.routes.get("normal");
+    const normal = this.routes.get("normal");
+    const allowed = (route: Route) => !isCloudProviderId(route.providerId) && !/:cloud\b/i.test(route.model);
+    const route = normal && allowed(normal) ? normal : [...this.routes.values()].find(allowed);
     if (!route) {
       throw new Error("No model route configured for task class: normal");
     }
@@ -132,6 +134,7 @@ export class DefaultModelRouter implements ModelRouter {
     if (preferredModel?.includes("/")) {
       const [providerId, ...rest] = preferredModel.split("/");
       const model = rest.join("/");
+      if (/:cloud\b/i.test(model)) return this.resolveLocalNormal();
       if (isCloudProviderId(providerId)) {
         return this.resolveCloudOrFallback(providerId, model, taskClass);
       }
@@ -149,7 +152,7 @@ export class DefaultModelRouter implements ModelRouter {
       throw new Error(`No model route configured for task class: ${taskClass}`);
     }
 
-    if (isCloudProviderId(route.providerId)) {
+    if (isCloudProviderId(route.providerId) || /:cloud\b/i.test(route.model)) {
       const label: TaskClass =
         preferredClass === "frontier" || taskClass === "frontier"
           ? "frontier"
