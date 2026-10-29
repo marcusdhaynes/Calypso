@@ -27,6 +27,8 @@ The existing Calypso repository was inspected before this rebuild. Original pack
 - Windows control: 9 simulated-host checks pass; one optional real-PowerShell check skips in this environment.
 - All original workspace TypeScript checks pass after building package declarations.
 - A real chat response was obtained from the installed local LFM2.5 8B model; real OpenClaw agents and the earlier test project appear in the new workspace.
+- A second live check using Qwen3.5 4B created `VERIFIED.md` in the actual project directory and had the reviewer independently read it; both phases used real read/write tools. The earlier LFM test is retained as a cancelled failure case rather than claimed successful.
+- GitHub Actions built the web app, preserved packages, and Windows/macOS/Linux desktop packages. Responsive phone/desktop layout checks found no document overflow in the inspected views. Browser screenshot capture was unavailable, so image-based visual verification is incomplete.
 
 ## Practical limits
 

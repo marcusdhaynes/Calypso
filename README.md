@@ -10,6 +10,8 @@ Calypso combines a lightweight workspace with OpenClaw and free local AI. Projec
 
 Install Node.js 22.13+ (24 recommended), Ollama with a downloaded local model, and OpenClaw with its gateway running.
 
+The locally verified recommendation for this machine is `qwen3.5:4b` (`ollama pull qwen3.5:4b`, about 3.3 GB of local weights). Its build-and-review check created a real project file and independently read it back. LFM2.5 remains selectable, but its tool-use checks were less reliable here.
+
 ```sh
 git clone https://github.com/marcusdhaynes/Calypso.git
 cd Calypso
