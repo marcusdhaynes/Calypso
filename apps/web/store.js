@@ -11,6 +11,11 @@ export async function connect(){try{const status=await request('/api/status');co
 export async function refresh(){if(!workspace.connected)return;try{const s=await request('/api/state?revision='+workspace.state.revision);if(!s.unchanged){workspace.state=s;emit();}}catch{workspace.connected=false;workspace.state=local;emit();}}
 export async function importDrafts(){if(!workspace.connected)throw Error('Connect your computer first.');const result=await request('/api/action',{type:'workspace.import',data:{workers:local.workers,projects:local.projects,memories:local.memories}});await refresh();return result;}
 export function pair(){if(location.origin===workspace.base)return connect();const popup=window.open(workspace.base+'/pair?origin='+encodeURIComponent(location.origin),'calypso-pair','width=580,height=560');if(!popup)throw Error('Allow the connection window to open, or use the local app.');const listener=async e=>{if(e.origin!==workspace.base||e.source!==popup||e.data?.type!=='calypso-paired')return;workspace.token=e.data.token;sessionStorage.setItem('calypso.bridge.token',workspace.token);window.removeEventListener('message',listener);await connect();};window.addEventListener('message',listener);}
+// A user-triggered, project-scoped navigation; no general local-access token.
+export function launchLocally(project,projectAction='resume',instructions=''){
+ const form=document.createElement('form');form.method='POST';form.action=ENDPOINT+'/launch';form.target='_self';form.hidden=true;
+ const payload=document.createElement('input');payload.name='payload';payload.value=JSON.stringify({project,action:projectAction,instructions,workers:local.workers.filter(w=>project.workerIds.includes(w.id))});form.append(payload);document.body.append(form);form.submit();return Promise.resolve(project);
+}
 export async function action(type,b={}){
  if(workspace.connected){const result=await request('/api/action',{type,data:b});await refresh();return result;}
  let result;
@@ -25,9 +30,9 @@ export async function action(type,b={}){
  else if(type==='memory.save'){if(!b.content?.trim())throw Error('Enter a memory.');result={...b,id:b.id||id(),createdAt:at()};const i=local.memories.findIndex(m=>m.id===result.id);if(i>=0)local.memories[i]=result;else local.memories.push(result);}
  else if(type==='memory.delete'){local.memories=local.memories.filter(m=>m.id!==b.id);result={ok:true};}
  else if(type==='settings.update'){if(b.freeOnly===false||b.cloudModelsEnabled||b.apiKey||b.baseUrl)throw Error('Only free local models are allowed.');Object.assign(local.settings,{theme:b.theme||local.settings.theme,speech:b.speech??local.settings.speech,freeOnly:true});result=local.settings;}
- else if(type==='project.action')throw Error('Connect your local computer to run or change live tasks.');
+ else if(type==='project.action'){const p=local.projects.find(p=>p.id===b.id);if(!p)throw Error('Project not found.');return launchLocally(p,b.action,b.instructions||'');}
  else throw Error('This feature needs your local computer. Connect Calypso to continue.');
- saveLocal();workspace.state=local;emit();return result;
+ saveLocal();workspace.state=local;emit();if(type==='project.create'&&b.start!==false)return launchLocally(result);return result;
 }
 export async function chat(conversationId,text,onDelta,signal,workerId){if(!workspace.connected)throw Error('Connect your computer to chat with a free local model.');const r=await fetch(workspace.base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json',...(workspace.token?{Authorization:'Bearer '+workspace.token}:{})},body:JSON.stringify({conversationId,text,workerId}),signal});if(!r.ok){const d=await r.json();throw Error(d.error);}let buf='';const decoder=new TextDecoder();for await(const chunk of r.body){buf+=decoder.decode(chunk,{stream:true});let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(line){const d=JSON.parse(line);if(d.error)throw Error(d.error);if(d.delta)onDelta(d.delta);}}}await refresh();}
 export function exportWorkspace(){return JSON.stringify(workspace.state,null,2);}

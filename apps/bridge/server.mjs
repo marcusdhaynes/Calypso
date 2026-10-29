@@ -80,6 +80,14 @@ export function createCalypso(options={}){
  function newProject(b){if(!needed(b.name,120)||!needed(b.description))throw Error('Add a project name and describe the outcome.');const ids=Array.isArray(b.workerIds)?b.workerIds:[];const team=b.teamId?state.teams.find(t=>t.id===b.teamId):null;const chosen=state.workers.filter(w=>(team?.workerIds||ids).includes(w.id));if(!chosen.length)throw Error('Choose at least one agent.');chosen.sort((a,b)=>roleOrder.indexOf(a.role)-roleOrder.indexOf(b.role));const id=uid(),folder=path.join(dataRoot,'projects',id);fs.mkdirSync(folder,{recursive:true});const p={id,name:b.name.trim(),description:b.description.trim(),workerIds:chosen.map(w=>w.id),teamId:team?.id,status:b.start===false?'draft':'queued',createdAt:now(),updatedAt:now(),folder,events:[],tasks:chosen.map((w,i)=>({id:'phase-'+(i+1),workerId:w.id,workerName:w.name,role:w.role,title:roleName[w.role]||'Specialist work',status:'queued'}))};fs.writeFileSync(path.join(folder,'PROJECT.md'),`# ${p.name}\n\n${p.description}\n`);state.projects.unshift(p);log(`${chosen.length} agents assigned. ${p.status==='draft'?'Draft saved.':'Work starts automatically.'}`,p);setTimeout(pump,50);return p;}
  async function action(type,b){
   if(type==='project.create')return newProject(b);
+  if(type==='project.launch'){
+   if(!b.project||!needed(b.project.id,100)||!['resume','pause','cancel','complete','followup'].includes(b.action))throw Error('Invalid project launch.');
+   let p=state.projects.find(p=>p.browserId===b.project.id||p.id===b.project.remoteId);
+   if(!p){await action('workspace.import',{workers:b.workers||[],projects:[{...b.project,remoteId:undefined}],memories:[]});p=state.projects.find(p=>p.browserId===b.project.id);}
+   if(!p)throw Error('The saved project could not be transferred. Check its selected agents.');
+   if(b.action==='resume'&&['queued','running','review','done'].includes(p.status))return p;
+   return action('project.action',{id:p.id,action:b.action,instructions:b.instructions});
+  }
   if(type==='workspace.import'){let count=0;for(const w of (b.workers||[]).slice(0,50)){if(!state.workers.some(x=>x.id===w.id)&&/^[a-z][a-z0-9-]{1,39}$/.test(w.id)&&roleOrder.includes(w.role)&&needed(w.name,80))state.workers.push({id:w.id,name:w.name,role:w.role,instructions:String(w.instructions||'').slice(0,10000),engine:'local',autonomy:'ask',createdAt:now()});}for(const p of (b.projects||[]).slice(0,100)){if(p.remoteId||state.projects.some(x=>x.browserId===p.id))continue;try{const imported=newProject({...p,start:false});imported.browserId=p.id;count++;}catch{}}for(const m of(b.memories||[]).slice(0,100))if(needed(m.content,6000)&&!state.memories.some(x=>x.content===m.content))state.memories.push({id:uid(),content:m.content,scope:'global',createdAt:now()});save();return {count};}
   if(type==='browser.status'){const r=await runCli(['browser','tabs','--json'],false,30000);if(!r.ok)throw Error(r.error);return r.data||{text:r.text};}
   if(type==='browser.open'){let url;try{url=new URL(b.url);}catch{throw Error('Enter a full http or https URL');}if(!['http:','https:'].includes(url.protocol))throw Error('Only web URLs can be opened.');const r=await runCli(['browser','open',url.href,'--json'],false,45000);if(!r.ok)throw Error(r.error);return r.data||{text:r.text};}
@@ -120,6 +128,14 @@ export function createCalypso(options={}){
   if(req.method==='GET'&&u.pathname==='/api/status')return json(res,200,await health());
   if(req.method==='GET'&&u.pathname==='/api/state'){if(Number(u.searchParams.get('revision'))===state.revision&&u.searchParams.has('revision'))return json(res,200,{unchanged:true,revision:state.revision});return json(res,200,publicState());}
   if(req.method==='GET'&&u.pathname==='/api/events'){res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.write(`data: ${state.revision}\n\n`);clients.add(res);req.on('close',()=>clients.delete(res));return;}
+  if(req.method==='POST'&&u.pathname==='/launch'){
+   // Allow only top-level, user-initiated project handoffs from our own hosted
+   // app. This does not relax the token requirement on any general API route.
+   if(origin!=='https://marcusdhaynes.github.io'||(req.headers['sec-fetch-mode']&&req.headers['sec-fetch-mode']!=='navigate')||(req.headers['sec-fetch-dest']&&req.headers['sec-fetch-dest']!=='document'))return json(res,403,{error:'Open this project from the Calypso app.'});
+   let form='';for await(const chunk of req){form+=chunk;if(form.length>250000)throw Error('Project handoff is too large.');}
+   const data=JSON.parse(new URLSearchParams(form).get('payload')||'{}');const project=await action('project.launch',data);
+   res.writeHead(303,{'Location':`http://${host}/#project=${encodeURIComponent(project.id)}`,'Cache-Control':'no-store'});res.end();return;
+  }
   if(req.method==='POST'&&u.pathname==='/api/action'){const b=await read(req);return json(res,200,await action(b.type,b.data||{}));}
   if(req.method==='GET'&&u.pathname==='/api/artifacts')return json(res,200,state.projects.flatMap(files));
   if(req.method==='GET'&&u.pathname.startsWith('/api/file/')){const [id,...parts]=u.pathname.slice(10).split('/');const p=state.projects.find(p=>p.id===id);if(!p)throw Error('Project not found');const file=path.resolve(p.folder,decodeURIComponent(parts.join('/')));if(!file.startsWith(path.resolve(p.folder)+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()||!fs.realpathSync(file).startsWith(fs.realpathSync(p.folder)+path.sep))return json(res,403,{error:'File is outside the project'});res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="${path.basename(file).replace(/["\r\n]/g,'')}"`});fs.createReadStream(file).pipe(res);return;}
