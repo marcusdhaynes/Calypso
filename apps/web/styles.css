@@ -21,3 +21,22 @@ button,a.button{text-transform:capitalize}
 .markdown blockquote{border-left:3px solid var(--accent);padding-left:13px;margin:10px 0;color:var(--secondary)}
 .markdown hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 .markdown .cal-info-section .cal-section-body>h3{margin-top:9px}
+
+
+/* Conversation is a bounded scroll region; the page and composer do not trap the wheel. */
+.chat-layout{height:max(480px,calc(100dvh - 260px));max-height:950px;min-height:0;grid-template-rows:minmax(0,1fr)}
+.chat-pane{min-height:0!important;min-width:0;overflow:hidden}
+.chat-messages{flex:1 1 0;min-height:0;max-height:100%;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:thin}
+.chat-notice{margin:0 24px 12px;padding:11px 14px;border:1px solid #92544c;background:#301d22;color:#f4c0b7;border-radius:8px;font-size:12px;line-height:1.6}
+.chat-notice[hidden]{display:none}
+#live-status{font-weight:400;color:#99b6ac;font-size:10px}
+@media(max-width:950px){
+ .chat-layout{height:max(520px,calc(100dvh - 240px));max-height:950px;grid-template-rows:auto minmax(0,1fr)}
+ .conversation-list{min-height:0;max-height:100px}
+ .chat-messages{padding:20px 18px}
+}
+@media(max-width:700px){
+ .chat-layout{height:max(520px,calc(100dvh - 210px))}
+ .chat-composer{margin:0 12px 12px}
+ .chat-notice{margin:0 12px 12px}
+}
