@@ -35,7 +35,7 @@ export async function importDrafts(){if(!workspace.connected)throw Error('Connec
 let pairingPopup=null,pairingCallbacks=[],pairingListener=null,pairingWatch=null;
 export function pair(onConnected){
  if(location.origin===workspace.base)return connect().then(ok=>{if(ok)onConnected?.();return ok;});
- if(pairingPopup&&!pairingPopup.closed){if(onConnected)pairingCallbacks.push(onConnected);pairingPopup.focus();return;}
+ if(pairingPopup&&!pairingPopup.closed){if(onConnected&&!pairingCallbacks.length)pairingCallbacks.push(onConnected);pairingPopup.focus();return;}
  if(pairingListener)window.removeEventListener('message',pairingListener);
  if(pairingWatch)clearInterval(pairingWatch);
  pairingCallbacks=onConnected?[onConnected]:[];
