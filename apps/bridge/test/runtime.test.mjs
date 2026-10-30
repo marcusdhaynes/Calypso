@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import {createCalypso,isLocalModel,blockedReply,visibleStream,needsWeb,parseFeed} from '../server.mjs';
+import {createCalypso,isLocalModel,blockedReply,visibleStream,needsWeb,parseFeed,newsBriefing} from '../server.mjs';
 
 async function setup(t,extra={}){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'calypso-test-'));
@@ -49,4 +49,8 @@ test('failed web retrieval is explicitly distinguished from no internet capabili
 test('web routing and RSS decoding keep reference text readable',()=>{
  assert.equal(needsWeb('Any big news in the world today?'),true);assert.equal(needsWeb('Search for free diagram tools'),true);assert.equal(needsWeb('Write a poem about rain'),false);
  const entries=parseFeed('<rss><channel><item><title>A &amp; B</title><link>https://example.org/a</link><description>&lt;b&gt;Actual summary&lt;/b&gt;</description></item></channel></rss>');assert.equal(entries[0].summary,'Actual summary');assert.equal(entries[0].title,'A & B');
+});
+
+test('news briefs contain only fetched report details and deduplicate overlapping stories',()=>{
+ const summary='Officials confirmed a temporary ceasefire.';const r=newsBriefing({checkedAt:new Date().toISOString(),sources:[{title:'Kherson ceasefire brings quiet',summary,publisher:'BBC News',url:'https://example.org/1'},{title:'Kherson ceasefire brings relief',summary:'UNSUPPORTED duplicate detail',publisher:'Example',url:'https://example.org/2'}]});assert.match(r,/Officials confirmed a temporary ceasefire/);assert.doesNotMatch(r,/UNSUPPORTED/);assert.match(r,/Read the report/);
 });
