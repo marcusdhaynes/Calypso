@@ -39,7 +39,7 @@ test('live questions fetch sources before local inference and preserve dated lin
  const {app,post,base,modelRequests}=await setup(t,{webLookup:async text=>{lookedUp=text;return {sources,checkedAt:new Date().toISOString()};}});
  const c=await(await post('conversation.create',{workerId:'calypso'})).json();
  const r=await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Any big news in the world today?'})});
- const stream=await r.text();assert.match(lookedUp,/world today/);assert.match(stream,/Checking live web/);assert.match(modelRequests[0].messages.at(-1).content,/source-verified development/);assert.match(app.state.conversations[0].messages[1].content,/https:\/\/example.org\/story/);assert.deepEqual(app.state.conversations[0].messages[1].sources,sources);assert.equal(modelRequests[0].model,'free-local:1b');
+ const stream=await r.text();assert.match(lookedUp,/world today/);assert.match(stream,/Searching live sources/);assert.match(modelRequests[0].messages.at(-1).content,/source-verified development/);assert.match(app.state.conversations[0].messages[1].content,/https:\/\/example.org\/story/);assert.deepEqual(app.state.conversations[0].messages[1].sources,sources);assert.equal(modelRequests[0].model,'free-local:1b');
 });
 test('failed web retrieval is explicitly distinguished from no internet capability',async t=>{
  const {app,post,base,modelRequests}=await setup(t,{webLookup:async()=>{throw Error('offline');}});const c=await(await post('conversation.create',{workerId:'calypso'})).json();
