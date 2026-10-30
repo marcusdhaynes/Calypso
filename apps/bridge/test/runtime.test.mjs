@@ -61,7 +61,12 @@ test('celebrity death query searches targeted reports instead of unrelated world
  assert.equal(isDeathQuery('Any celebrity deaths?'),true);
  assert.equal(isGeneralNewsQuery('Any celebrity deaths?'),false);
  assert.equal(isGeneralNewsQuery('Any big news in the world today?'),true);
- const plan=webSearchPlan('Any celebrity deaths?');
+ assert.equal(needsWeb('Did Jordan Sample die?'),true);
+ assert.equal(isDeathQuery('Did Jordan Sample die?'),true);
+ const namedPlan=webSearchPlan('Did Jordan Sample die?');
+ assert.equal(namedPlan.death,true);assert.equal(namedPlan.broadDeath,false);
+ assert.ok(namedPlan.urls.some(url=>decodeURIComponent(url).includes('Jordan Sample')));
+  const plan=webSearchPlan('Any celebrity deaths?');
  assert.equal(plan.news,true);assert.equal(plan.death,true);assert.equal(plan.general,false);
  assert.ok(plan.urls.some(url=>url.includes('/rss/search?')));
  assert.ok(plan.urls.every(url=>!url.includes('/rss/headlines/section/topic/WORLD')));
