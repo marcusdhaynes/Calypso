@@ -22,13 +22,14 @@ export async function tcpReady(port){return new Promise(resolve=>{const s=net.cr
 
 // Search only named public feed providers. Never fetch arbitrary user-provided addresses.
 export const isDeathQuery=text=>/\b(celebrity|celebrities|actor|actress|singer|musician|famous|star|obituar(?:y|ies)|deaths?|died|dies|dead|passed away)\b/i.test(text)&&/\b(deaths?|died|dies|dead|passing|passed away|obituar(?:y|ies))\b/i.test(text);
+export const isBroadDeathQuery=text=>isDeathQuery(text)&&/\b(celebrity|celebrities|famous|actors?|actresses|singers?|musicians?|stars?|obituaries)\b/i.test(text);
 export const isGeneralNewsQuery=text=>{const q=String(text||'').trim().toLowerCase();return !/\b(?:about|regarding|celebrity|deaths?|died|dies|obituary|actor|singer|music|sports|technology|election)\b/.test(q)&&(/\b(?:big|top|major|world|global|breaking|latest)\s+(?:news|headlines|stories)\b/.test(q)||/\b(?:news|headlines|stories)\s+(?:in\s+(?:the\s+)?world|today|right now)\b/.test(q)||/^(?:what(?:'s| is)?|any|the)?\s*(?:news|headlines)\s*[?.!]*$/.test(q));};
 export const needsWeb=text=>/\b(news|headlines|today|tonight|yesterday|tomorrow|latest|current(?:ly)?|recent(?:ly)?|right now|this (?:week|month|year)|look\s*up|search|browse|verify|fact.check|weather|forecast|stock price|election|obituar(?:y|ies)|celebrity deaths?|died|dies|passed away|who is (?:the )?(?:president|ceo|prime minister))\b/i.test(text);
 const xmlText=s=>String(s||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/<[^>]*>/g,' ').replace(/&(?:amp|lt|gt|quot|apos|nbsp);|&#(x[0-9a-f]+|\d+);/gi,(v,n)=>n?String.fromCodePoint(Math.min(0x10ffff,n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n))):({'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&apos;':"'",'&nbsp;':' '}[v.toLowerCase()]||v)).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 export function parseFeed(xml){return [...String(xml).matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)].map(([,item])=>{const field=tag=>xmlText(item.match(new RegExp('<'+tag+'\\b[^>]*>([\\s\\S]*?)<\\/'+tag+'>','i'))?.[1]);return {title:field('title'),url:field('link'),publishedAt:field('pubDate'),summary:field('description').slice(0,900),publisher:field('source')};}).filter(x=>x.title&&/^https?:\/\//.test(x.url));}
 export function webSearchPlan(text){
  const query=String(text||'').replace(/\s+/g,' ').trim().slice(0,300);
- const general=isGeneralNewsQuery(query),death=isDeathQuery(query);
+ const general=isGeneralNewsQuery(query),death=isDeathQuery(query),broadDeath=isBroadDeathQuery(query);
  const news=general||death||/\b(news|headlines|breaking|obituary|election)\b/i.test(query);
  const window=/(today|tonight|right now|past 24 hours)/i.test(query)?'1d':/(this month|last month|past month)/i.test(query)?'30d':'7d';
  const google=q=>'https://news.google.com/rss/search?q='+encodeURIComponent(q)+'&hl=en-US&gl=US&ceid=US:en';
@@ -36,8 +37,14 @@ export function webSearchPlan(text){
  let queries,urls;
  if(general){queries=['world headlines'];urls=['https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en','https://feeds.bbci.co.uk/news/world/rss.xml'];}
  else if(death){
-  queries=['celebrity actor singer died obituary when:'+window,'"celebrity death" OR "actor dies" OR "singer dies" when:'+window];
-  urls=[google(queries[0]),google(queries[1]),bing('celebrity deaths actor singer died')];
+  if(broadDeath){
+   queries=['"celebrity death" OR "actor died" OR "singer died" when:'+window,'actor dies OR singer dies OR musician dies when:'+window];
+   urls=[google(queries[0]),google(queries[1]),bing('celebrity death died')];
+  }else{
+   const subject=query.replace(/^(?:did|has|have|is|was|any|what happened to)\s+/i,'').replace(/\b(?:died|die|dead|death|recently|today|this week)\b/gi,'').replace(/[?!]+/g,'').trim();
+   queries=[subject+' died OR death when:'+window];
+   urls=[google(queries[0]),bing(subject+' death news')];
+  }
  }else if(news){
   const cleaned=query.replace(/^(?:can you|please|tell me|show me|find|any|what(?:'s| is| are)?|latest)\s+/i,'').replace(/[?!]+$/,'');
   queries=[cleaned+' when:'+window];
@@ -46,7 +53,7 @@ export function webSearchPlan(text){
   const cleaned=query.replace(/^(?:can you|please|search for|look up|find|tell me about)\s+/i,'').replace(/[?!]+$/,'');
   queries=[cleaned];urls=['https://www.bing.com/search?format=rss&q='+encodeURIComponent(cleaned)];
  }
- return {news,general,death,query,queries,urls,window};
+ return {news,general,death,broadDeath,query,queries,urls,window};
 }
 export async function lookupWeb(text,signal,fetcher=fetch){
  const plan=webSearchPlan(text);
@@ -212,7 +219,7 @@ export function createCalypso(options={}){
      send({sources:web.sources,search:{count:web.sources.length,checkedAt:web.checkedAt,error:web.error||null}});
      // Answer time-sensitive reports directly from dated headlines when appropriate.
      let verified=null;
-     if(isDeathQuery(b.text))verified=deathNewsDigest(web);
+     if(isBroadDeathQuery(b.text))verified=deathNewsDigest(web);
      else if(isGeneralNewsQuery(b.text)&&web.kind==='news'&&web.sources.length)verified=newsBriefing(web);
      else if(!web.sources.length)verified='I attempted a live web search for your question, but '+(web.error?'the providers could not be reached. '+web.error:'no relevant, verifiable results were returned.')+' I cannot confirm a current answer from that search. Try a more specific name or topic.';
      if(verified!==null){answer.content=verified;answer.status='done';send({delta:verified});send({done:true,sources:web.sources});return;}
