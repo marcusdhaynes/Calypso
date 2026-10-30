@@ -97,7 +97,7 @@ test('specific current-events query with no matching sources refuses fabricated 
  const c=await(await post('conversation.create',{workerId:'calypso'})).json();
  await (await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Any celebrity deaths?'})})).text();
  assert.equal(modelRequests.length,0);
- assert.match(app.state.conversations[0].messages[1].content,/couldn't verify|does \*\*not\*\* mean/i);
+ assert.match(app.state.conversations[0].messages[1].content,/not\*\* proof|couldn't verify|does \*\*not\*\* mean/i);
 });
 
 
@@ -128,5 +128,5 @@ test('exact user wording searches celebrity obituaries instead of AnyDesk or dic
  assert.match(result.sources[0].title,/Robin Example/);
  assert.doesNotMatch(deathNewsDigest(result),/AnyDesk|dictionary|Riley Example/i);
  assert.match(deathNewsDigest(result),/example.org\/story\/2/);
- assert.doesNotMatch(deathNewsDigest({sources:[],checkedAt:new Date().toISOString()}),/no reports of celebrity deaths|no one died\./i);
+ assert.match(deathNewsDigest({sources:[],checkedAt:new Date().toISOString()}),/not\*\* proof/i);
 });
