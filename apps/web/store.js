@@ -2,15 +2,58 @@ const KEY='calypso.workspace.v2',ENDPOINT='http://127.0.0.1:18791';
 const id=()=>crypto.randomUUID(),at=()=>new Date().toISOString();
 const seed=()=>({version:2,revision:0,workers:[['coordinator','Calypso','coordinator','Scope the project and organize the crew.'],['researcher','Scout','researcher','Gather evidence and compare possibilities.'],['writer','Maker','writer','Build useful, verified deliverables.'],['reviewer','Lens','reviewer','Independently check the results.']].map(([id,name,role,instructions])=>({id,name,role,instructions,engine:'local',createdAt:at()})),teams:[{id:'default',name:'Calypso crew',description:'A small, focused team for big ideas.',workerIds:['coordinator','researcher','writer','reviewer']}],projects:[],conversations:[],routines:[],memories:[],settings:{model:'',theme:'dark',freeOnly:true,speech:false},activity:[]});
 let local;try{local=JSON.parse(localStorage.getItem(KEY))||seed();}catch{local=seed();}
-export const workspace={state:local,connected:false,status:null,base:location.hostname==='127.0.0.1'||location.hostname==='localhost'?location.origin:ENDPOINT,token:sessionStorage.getItem('calypso.bridge.token')||'',listeners:new Set()};
+export const workspace={state:local,connected:false,status:null,base:location.hostname==='127.0.0.1'||location.hostname==='localhost'?location.origin:ENDPOINT,token:sessionStorage.getItem('calypso.bridge.token')||'',bridgeReachable:false,connectionIssue:null,connectionError:'',failedRefreshes:0,listeners:new Set()};
 function saveLocal(){local.revision++;localStorage.setItem(KEY,JSON.stringify(local));}
 export function subscribe(fn){workspace.listeners.add(fn);return()=>workspace.listeners.delete(fn);}
 function emit(){for(const fn of workspace.listeners)fn();}
-export async function request(route,body){const r=await fetch(workspace.base+route,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(workspace.token?{Authorization:'Bearer '+workspace.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(route==='/api/action'?200000:5000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Local workspace request failed');return d;}
-export async function connect(){try{const status=await request('/api/status');const remote=await request('/api/state');workspace.status=status;workspace.connected=true;workspace.state=remote;emit();return true;}catch{workspace.connected=false;workspace.state=local;emit();return false;}}
-export async function refresh(){if(!workspace.connected)return;try{const s=await request('/api/state?revision='+workspace.state.revision);if(!s.unchanged){workspace.state=s;emit();}}catch{workspace.connected=false;workspace.state=local;emit();}}
+export async function request(route,body){const r=await fetch(workspace.base+route,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(workspace.token?{Authorization:'Bearer '+workspace.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(route==='/api/action'?200000:5000)});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Local workspace request failed');error.status=r.status;throw error;}return d;}
+export async function connect(){
+ // Probe the bridge separately from its authenticated workspace: running is not paired.
+ try{await request('/health');workspace.bridgeReachable=true;}
+ catch(error){workspace.connected=false;workspace.bridgeReachable=false;workspace.connectionIssue='unreachable';workspace.connectionError=error.message;workspace.state=local;emit();return false;}
+ try{
+  const remote=await request('/api/state');
+  workspace.connected=true;workspace.connectionIssue=null;workspace.connectionError='';workspace.failedRefreshes=0;workspace.state=remote;emit();
+  // Ollama may be starting or busy: status/model discovery must not invalidate a valid connection.
+  request('/api/status').then(status=>{if(workspace.connected){workspace.status=status;emit();}}).catch(()=>{});
+  return true;
+ }catch(error){
+  workspace.connected=false;workspace.connectionIssue=error.status===401?'pairing':error.status===403?'permission':'temporary';
+  workspace.connectionError=error.message;workspace.state=local;emit();return false;
+ }
+}
+export async function refresh(){
+ if(!workspace.connected)return;
+ try{const s=await request('/api/state?revision='+workspace.state.revision);workspace.failedRefreshes=0;if(!s.unchanged){workspace.state=s;emit();}}
+ catch(error){
+  if(error.status===401||error.status===403){workspace.connected=false;workspace.connectionIssue=error.status===401?'pairing':'permission';workspace.connectionError=error.message;workspace.state=local;emit();return;}
+  // A single timeout or busy system is not a disconnection. Recheck after repeated failures.
+  if(++workspace.failedRefreshes>=3)await connect();
+ }
+}
 export async function importDrafts(){if(!workspace.connected)throw Error('Connect your computer first.');const result=await request('/api/action',{type:'workspace.import',data:{workers:local.workers,projects:local.projects,memories:local.memories}});await refresh();return result;}
-export function pair(){if(location.origin===workspace.base)return connect();const popup=window.open(workspace.base+'/pair?origin='+encodeURIComponent(location.origin),'calypso-pair','width=580,height=560');if(!popup)throw Error('Allow the connection window to open, or use the local app.');const listener=async e=>{if(e.origin!==workspace.base||e.source!==popup||e.data?.type!=='calypso-paired')return;workspace.token=e.data.token;sessionStorage.setItem('calypso.bridge.token',workspace.token);window.removeEventListener('message',listener);await connect();};window.addEventListener('message',listener);}
+let pairingPopup=null,pairingCallbacks=[],pairingListener=null,pairingWatch=null;
+export function pair(onConnected){
+ if(location.origin===workspace.base)return connect().then(ok=>{if(ok)onConnected?.();return ok;});
+ if(pairingPopup&&!pairingPopup.closed){if(onConnected)pairingCallbacks.push(onConnected);pairingPopup.focus();return;}
+ if(pairingListener)window.removeEventListener('message',pairingListener);
+ if(pairingWatch)clearInterval(pairingWatch);
+ pairingCallbacks=onConnected?[onConnected]:[];
+ const popup=window.open(workspace.base+'/pair?origin='+encodeURIComponent(location.origin),'calypso-pair','width=580,height=560');
+ if(!popup){pairingCallbacks=[];throw Error('Allow the Calypso pairing window to open, or use the local app.');}
+ pairingPopup=popup;
+ const cleanup=()=>{window.removeEventListener('message',pairingListener);clearInterval(pairingWatch);pairingListener=null;pairingWatch=null;pairingPopup=null;};
+ pairingListener=async e=>{
+  if(e.origin!==workspace.base||e.source!==popup||e.data?.type!=='calypso-paired'||typeof e.data.token!=='string')return;
+  cleanup();workspace.token=e.data.token;sessionStorage.setItem('calypso.bridge.token',workspace.token);
+  const ok=await connect();const callbacks=pairingCallbacks.splice(0);
+  if(ok)for(const cb of callbacks)cb();
+  else window.dispatchEvent(new CustomEvent('calypso-pair-error',{detail:workspace.connectionError||'Pairing could not be verified.'}));
+  popup.close();
+ };
+ window.addEventListener('message',pairingListener);
+ pairingWatch=setInterval(()=>{if(popup.closed){cleanup();pairingCallbacks=[];}},1000);
+}
 // Project-only launch is trusted to this app's publisher origin. General local
 // APIs still require pairing; this endpoint returns only the selected project ID.
 export async function launchLocally(project,projectAction='resume',instructions=''){
