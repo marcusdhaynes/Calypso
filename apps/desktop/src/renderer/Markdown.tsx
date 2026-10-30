@@ -88,14 +88,14 @@ function parse(src: string): Block[] {
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { blocks.push({ kind: "hr" }); i++; continue; }
     if (/^[-*+]\s+/.test(t)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) items.push(lines[i++].trim().replace(/^[-*+]\s+/, ""));
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { const raw = lines[i++]; items.push((raw.match(/^\s*/)?.[0] ?? "") + raw.trim().replace(/^[-*+]\s+/, "")); }
       blocks.push({ kind: "ul", items, start: 1 });
       continue;
     }
     const ol = /^(\d+)[.)]\s+/.exec(t);
     if (ol) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) items.push(lines[i++].trim().replace(/^\d+[.)]\s+/, ""));
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { const raw = lines[i++]; items.push((raw.match(/^\s*/)?.[0] ?? "") + raw.trim().replace(/^\d+[.)]\s+/, "")); }
       blocks.push({ kind: "ol", items, start: Number(ol[1]) });
       continue;
     }
@@ -118,50 +118,112 @@ function parse(src: string): Block[] {
 
 const headingSize = [0, 18, 16.5, 15.5, 15, 14.5, 14.5];
 
+function renderBlocks(blocks: Block[], keyPrefix = "item"): ReactNode[] {
+  return blocks.map((b, bi) => {
+    const k = keyPrefix + "-" + bi;
+    switch (b.kind) {
+      case "h":
+        return (
+          <div key={k} style={{ fontWeight: 650, fontSize: headingSize[b.level], marginTop: bi ? 6 : 0 }}>
+            {renderInline(b.text, k)}
+          </div>
+        );
+      case "ul":
+      case "ol": {
+        const Tag = b.kind;
+        return (
+          <Tag
+            key={k}
+            start={b.kind === "ol" ? b.start : undefined}
+            style={{ margin: 0, paddingLeft: 32, display: "flex", flexDirection: "column", gap: 5, listStyleType: b.kind === "ol" ? "decimal-leading-zero" : "disc", fontVariantNumeric: "tabular-nums" }}
+          >
+            {b.items.map((item, ii) => {
+              const depth = Math.min(4, Math.floor((item.match(/^\s*/)?.[0].length ?? 0) / 2));
+              return <li key={k + "-" + ii} style={{ paddingLeft: 5, marginLeft: depth * 16 }}>{renderInline(item.trim(), k + "-" + ii)}</li>;
+            })}
+          </Tag>
+        );
+      }
+      case "code":
+        return (
+          <pre key={k} style={{ margin: 0, fontFamily: mono, fontSize: 12.5, background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre" }}>
+            {b.text}
+          </pre>
+        );
+      case "quote":
+        return (
+          <div key={k} style={{ borderLeft: "3px solid rgba(56,210,193,0.5)", paddingLeft: 10, opacity: 0.9 }}>
+            {b.lines.map((l, li) => <Fragment key={li}>{li ? <br /> : null}{renderInline(l, k + "-" + li)}</Fragment>)}
+          </div>
+        );
+      case "hr":
+        return <hr key={k} style={{ border: 0, borderTop: "1px solid rgba(255,255,255,0.1)", margin: "4px 0", width: "100%" }} />;
+      default:
+        return (
+          <p key={k} style={{ margin: 0 }}>
+            {b.lines.map((l, li) => <Fragment key={li}>{li ? <br /> : null}{renderInline(l, k + "-" + li)}</Fragment>)}
+          </p>
+        );
+    }
+  });
+}
+
+type Section = { title: string; level: number; blocks: Block[] };
+
+function sectionsForLongReply(blocks: Block[], length: number): { intro: Block[]; sections: Section[] } | null {
+  if (length < 700 && blocks.length < 11) return null;
+  const headings = blocks.filter((b) => b.kind === "h");
+  const sections: Section[] = [];
+  const intro: Block[] = [];
+  if (headings.length >= 2) {
+    let active: Section | null = null;
+    for (const b of blocks) {
+      if (b.kind === "h") {
+        active = { title: b.text.replace(/^\d{1,2}[.)]\s*/, ""), level: b.level, blocks: [] };
+        sections.push(active);
+      } else if (active) {
+        active.blocks.push(b);
+      } else {
+        intro.push(b);
+      }
+    }
+  } else if (blocks.length >= 6) {
+    intro.push(...blocks.slice(0, 2));
+    for (let i = 2; i < blocks.length; i += 4) {
+      const group = blocks.slice(i, i + 4);
+      const first = group[0];
+      const title =
+        first.kind === "p" ? first.lines.join(" ") :
+        first.kind === "h" ? first.text :
+        first.kind === "ul" || first.kind === "ol" ? first.items[0] :
+        "Additional Details";
+      sections.push({ title: title.replace(/^#{1,6}\s*/, "").slice(0, 72), level: 2, blocks: group });
+    }
+  }
+  return sections.length ? { intro, sections } : null;
+}
+
 export function Markdown({ text }: { text: string }) {
   const blocks = parse(text);
+  const grouped = sectionsForLongReply(blocks, text.length);
   return (
     <div className="cal-md" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {blocks.map((b, bi) => {
-        const k = `b${bi}`;
-        switch (b.kind) {
-          case "h":
-            return (
-              <div key={k} style={{ fontWeight: 650, fontSize: headingSize[b.level], marginTop: bi ? 6 : 0 }}>
-                {renderInline(b.text, k)}
+      {grouped ? (
+        <>
+          {renderBlocks(grouped.intro, "intro")}
+          {grouped.sections.map((section, i) => (
+            <details className="cal-info-section" key={"section-" + i}>
+              <summary style={{ paddingLeft: 14 + Math.min(32, Math.max(0, section.level - 1) * 8) }}>
+                <span className="cal-section-number">{String(i + 1).padStart(2, "0")}</span>
+                <span>{renderInline(section.title, "section-title-" + i)}</span>
+              </summary>
+              <div className="cal-section-body" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {renderBlocks(section.blocks, "section-" + i)}
               </div>
-            );
-          case "ul":
-          case "ol": {
-            const Tag = b.kind;
-            return (
-              <Tag key={k} start={b.kind === "ol" ? b.start : undefined} style={{ margin: 0, paddingLeft: 22, display: "flex", flexDirection: "column", gap: 3 }}>
-                {b.items.map((it, ii) => <li key={`${k}-${ii}`}>{renderInline(it, `${k}-${ii}`)}</li>)}
-              </Tag>
-            );
-          }
-          case "code":
-            return (
-              <pre key={k} style={{ margin: 0, fontFamily: mono, fontSize: 12.5, background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre" }}>
-                {b.text}
-              </pre>
-            );
-          case "quote":
-            return (
-              <div key={k} style={{ borderLeft: "3px solid rgba(56,210,193,0.5)", paddingLeft: 10, opacity: 0.9 }}>
-                {b.lines.map((l, li) => <Fragment key={li}>{li ? <br /> : null}{renderInline(l, `${k}-${li}`)}</Fragment>)}
-              </div>
-            );
-          case "hr":
-            return <hr key={k} style={{ border: 0, borderTop: "1px solid rgba(255,255,255,0.1)", margin: "4px 0", width: "100%" }} />;
-          default:
-            return (
-              <p key={k} style={{ margin: 0 }}>
-                {b.lines.map((l, li) => <Fragment key={li}>{li ? <br /> : null}{renderInline(l, `${k}-${li}`)}</Fragment>)}
-              </p>
-            );
-        }
-      })}
+            </details>
+          ))}
+        </>
+      ) : renderBlocks(blocks)}
     </div>
   );
 }
