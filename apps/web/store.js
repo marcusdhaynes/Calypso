@@ -9,7 +9,7 @@ function emit(){for(const fn of workspace.listeners)fn();}
 export async function request(route,body){const r=await fetch(workspace.base+route,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(workspace.token?{Authorization:'Bearer '+workspace.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(route==='/api/action'?200000:5000)});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Local workspace request failed');error.status=r.status;throw error;}return d;}
 export async function connect(){
  // Probe the bridge separately from its authenticated workspace: running is not paired.
- try{const probe=await request('/health');workspace.bridgeReachable=true;workspace.needsEngineUpdate=probe.liveSearch!==true;}
+ try{const probe=await request('/health');workspace.bridgeReachable=true;workspace.needsEngineUpdate=probe.liveSearch!==true||probe.searchRevision!==2;}
  catch(error){workspace.connected=false;workspace.bridgeReachable=false;workspace.connectionIssue='unreachable';workspace.connectionError=error.message;workspace.state=local;emit();return false;}
  try{
   const remote=await request('/api/state');
