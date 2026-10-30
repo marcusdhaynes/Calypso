@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import {createCalypso,isLocalModel,blockedReply,visibleStream,needsWeb,parseFeed,newsBriefing} from '../server.mjs';
+import {createCalypso,isLocalModel,blockedReply,visibleStream,needsWeb,parseFeed,newsBriefing,lookupWeb,webSearchPlan,isDeathQuery,isGeneralNewsQuery,deathNewsDigest} from '../server.mjs';
 
 async function setup(t,extra={}){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'calypso-test-'));
@@ -44,7 +44,7 @@ test('live questions fetch sources before local inference and preserve dated lin
 test('failed web retrieval is explicitly distinguished from no internet capability',async t=>{
  const {app,post,base,modelRequests}=await setup(t,{webLookup:async()=>{throw Error('offline');}});const c=await(await post('conversation.create',{workerId:'calypso'})).json();
  await(await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Latest news?'})})).text();
- assert.match(modelRequests[0].messages.at(-1).content,/live verification failed/);assert.deepEqual(app.state.conversations[0].messages[1].sources,[]);
+ assert.equal(modelRequests.length,0);assert.match(app.state.conversations[0].messages[1].content,/providers could not be reached|could not verify/i);assert.deepEqual(app.state.conversations[0].messages[1].sources,[]);
 });
 test('web routing and RSS decoding keep reference text readable',()=>{
  assert.equal(needsWeb('Any big news in the world today?'),true);assert.equal(needsWeb('Search for free diagram tools'),true);assert.equal(needsWeb('Write a poem about rain'),false);
@@ -53,4 +53,44 @@ test('web routing and RSS decoding keep reference text readable',()=>{
 
 test('news briefs contain only fetched report details and deduplicate overlapping stories',()=>{
  const summary='Officials confirmed a temporary ceasefire.';const r=newsBriefing({checkedAt:new Date().toISOString(),sources:[{title:'Kherson ceasefire brings quiet',summary,publisher:'BBC News',url:'https://example.org/1'},{title:'Kherson ceasefire brings relief',summary:'UNSUPPORTED duplicate detail',publisher:'Example',url:'https://example.org/2'}]});assert.match(r,/Officials confirmed a temporary ceasefire/);assert.doesNotMatch(r,/UNSUPPORTED/);assert.match(r,/Read the report/);
+});
+
+
+test('celebrity death query searches targeted reports instead of unrelated world news',async()=>{
+ assert.equal(needsWeb('Any celebrity deaths?'),true);
+ assert.equal(isDeathQuery('Any celebrity deaths?'),true);
+ assert.equal(isGeneralNewsQuery('Any celebrity deaths?'),false);
+ assert.equal(isGeneralNewsQuery('Any big news in the world today?'),true);
+ const plan=webSearchPlan('Any celebrity deaths?');
+ assert.equal(plan.news,true);assert.equal(plan.death,true);assert.equal(plan.general,false);
+ assert.ok(plan.urls.some(url=>url.includes('/rss/search?')));
+ assert.ok(plan.urls.every(url=>!url.includes('/rss/headlines/section/topic/WORLD')));
+ const yesterday=new Date(Date.now()-86400000).toUTCString();
+ const titles=['Famous actor Jane Sample dies at 80','Economy slips on trade fears','Celebrated singer Alex Sample died at 73'];
+ const xml='<rss><channel>'+titles.map((title,i)=>'<item><title>'+title+'</title><link>https://example.org/'+i+'</link><pubDate>'+yesterday+'</pubDate><source>Example Wire</source><description>'+title+'</description></item>').join('')+'</channel></rss>';
+ const called=[];const fake=async url=>{called.push(url);return {ok:true,text:async()=>xml};};
+ const web=await lookupWeb('Any celebrity deaths?',new AbortController().signal,fake);
+ assert.ok(called.length>=2);assert.equal(web.sources.length,2);
+ assert.ok(web.sources.every(s=>/dies|died/.test(s.title)));
+ assert.ok(!web.sources.some(s=>/Economy/.test(s.title)));
+ assert.match(deathNewsDigest(web),/Jane Sample/);assert.match(deathNewsDigest(web),/https:\/\/example.org\/0/);
+});
+
+test('celebrity death chat returns fresh cited reports without substituting world headlines or requiring Ollama',async t=>{
+ const yesterday=new Date(Date.now()-86400000).toUTCString(),story={title:'Noted film actor Jordan Sample dies at 85',url:'https://example.org/obituary',publishedAt:yesterday,summary:'Publisher reports a death.',publisher:'Example Press'};
+ const {post,base,app,modelRequests}=await setup(t,{webLookup:async()=>({kind:'news',death:true,sources:[story],checkedAt:new Date().toISOString()})});
+ const c=await(await post('conversation.create',{workerId:'calypso'})).json();
+ const response=await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Any celebrity deaths?'})});
+ assert.equal(response.status,200);
+ const stream=await response.text();assert.match(stream,/Searching live sources/);assert.match(stream,/Jordan Sample/);assert.match(stream,/example.org\/obituary/);
+ assert.equal(modelRequests.length,0);assert.equal(app.state.conversations[0].messages[1].status,'done');
+ assert.equal(app.state.conversations[0].messages[1].sources[0].title,story.title);
+});
+
+test('specific current-events query with no matching sources refuses fabricated news',async t=>{
+ const {post,base,app,modelRequests}=await setup(t,{webLookup:async()=>({kind:'news',sources:[],checkedAt:new Date().toISOString()})});
+ const c=await(await post('conversation.create',{workerId:'calypso'})).json();
+ await (await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Any celebrity deaths?'})})).text();
+ assert.equal(modelRequests.length,0);
+ assert.match(app.state.conversations[0].messages[1].content,/couldn't verify|does \*\*not\*\* mean/i);
 });
