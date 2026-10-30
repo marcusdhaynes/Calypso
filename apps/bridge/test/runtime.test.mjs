@@ -99,3 +99,34 @@ test('specific current-events query with no matching sources refuses fabricated 
  assert.equal(modelRequests.length,0);
  assert.match(app.state.conversations[0].messages[1].content,/couldn't verify|does \*\*not\*\* mean/i);
 });
+
+
+test('exact user wording searches celebrity obituaries instead of AnyDesk or dictionary definitions',async()=>{
+ const question='Any celebrities die today?';
+ const plan=webSearchPlan(question);
+ assert.equal(needsWeb(question),true);
+ assert.equal(isDeathQuery(question),true);
+ assert.equal(plan.death,true);
+ assert.equal(plan.broadDeath,true);
+ assert.equal(plan.news,true);
+ assert.equal(plan.window,'1d');
+ assert.ok(plan.urls.every(url=>!decodeURIComponent(url).toLowerCase().includes('q=any&')));
+ assert.ok(plan.urls.some(url=>decodeURIComponent(url).toLowerCase().includes('celebrity')));
+ const now=new Date(),yesterday=new Date(now);yesterday.setHours(0,0,0,0);yesterday.setMilliseconds(-1);
+ const items=[
+  {title:'Remote Desktop Software for Windows | AnyDesk',date:now},
+  {title:'ANY Definition & Meaning - Merriam-Webster',date:now},
+  {title:'Famous stage actor Robin Example dies aged 80',date:now},
+  {title:'Actor death hoax debunked',date:now},
+  {title:'Beloved singer Riley Example died at 62',date:yesterday}
+ ];
+ const feed='<rss><channel>'+items.map((it,i)=>'<item><title>'+it.title+'</title><link>https://example.org/story/'+i+'</link><pubDate>'+it.date.toUTCString()+'</pubDate><description>'+it.title+'</description></item>').join('')+'</channel></rss>';
+ const searched=[];
+ const result=await lookupWeb(question,new AbortController().signal,async url=>{searched.push(url);return {ok:true,text:async()=>feed};});
+ assert.ok(searched.length>=2);
+ assert.equal(result.sources.length,1);
+ assert.match(result.sources[0].title,/Robin Example/);
+ assert.doesNotMatch(deathNewsDigest(result),/AnyDesk|dictionary|Riley Example/i);
+ assert.match(deathNewsDigest(result),/example.org\/story\/2/);
+ assert.doesNotMatch(deathNewsDigest({sources:[],checkedAt:new Date().toISOString()}),/no reports of celebrity deaths|no one died\./i);
+});
