@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import {createCalypso,isLocalModel,blockedReply,visibleStream} from '../server.mjs';
+import {createCalypso,isLocalModel,blockedReply,visibleStream,needsWeb,parseFeed} from '../server.mjs';
 
 async function setup(t,extra={}){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'calypso-test-'));
@@ -33,3 +33,20 @@ test('uploads cannot traverse paths or overwrite an existing project file',async
 test('a second engine cannot run duplicate schedules against the same workspace',async t=>{const {app}=await setup(t);assert.throws(()=>createCalypso({dataRoot:app.dataRoot,noImport:true}),/already running/);});
 test('Start imports and runs a browser draft once without broad hosted-page access',async t=>{const {app,post,base}=await setup(t);const body={project:{id:'browser-start-once',name:'Browser handoff',description:'Create the requested file',workerIds:['calypso']},workers:[],action:'resume'};const first=await(await post('project.launch',body)).json();assert.ok(first.id);await until(()=>app.state.projects[0].status==='review');const second=await(await post('project.launch',body)).json();assert.equal(second.id,first.id);assert.equal(app.state.projects.length,1);assert.equal((await fetch(base+'/api/state',{headers:{Origin:'https://marcusdhaynes.github.io'}})).status,401);});
 test('hosted Start can launch only a requested project; general access stays paired',async t=>{const {app,base}=await setup(t);const payload={project:{id:'direct-start',name:'Direct Start',description:'Create the project file',workerIds:['calypso']},workers:[],action:'resume'};const send=origin=>fetch(base+'/api/launch',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(payload)});assert.equal((await send('https://evil.invalid')).status,403);const accepted=await send('https://marcusdhaynes.github.io');assert.equal(accepted.status,200);const result=await accepted.json();assert.ok(result.projectId);assert.equal(result.projects,undefined);await until(()=>app.state.projects[0]?.status==='review');assert.equal((await fetch(base+'/api/state',{headers:{Origin:'https://marcusdhaynes.github.io'}})).status,401);assert.equal(app.state.projects.length,1);});
+
+test('live questions fetch sources before local inference and preserve dated links',async t=>{
+ let lookedUp='';const sources=[{title:'Verified current story',url:'https://example.org/story',publishedAt:new Date().toUTCString(),summary:'A source-verified development.',publisher:'Example News'}];
+ const {app,post,base,modelRequests}=await setup(t,{webLookup:async text=>{lookedUp=text;return {sources,checkedAt:new Date().toISOString()};}});
+ const c=await(await post('conversation.create',{workerId:'calypso'})).json();
+ const r=await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Any big news in the world today?'})});
+ const stream=await r.text();assert.match(lookedUp,/world today/);assert.match(stream,/Checking live web/);assert.match(modelRequests[0].messages.at(-1).content,/source-verified development/);assert.match(app.state.conversations[0].messages[1].content,/https:\/\/example.org\/story/);assert.deepEqual(app.state.conversations[0].messages[1].sources,sources);assert.equal(modelRequests[0].model,'free-local:1b');
+});
+test('failed web retrieval is explicitly distinguished from no internet capability',async t=>{
+ const {app,post,base,modelRequests}=await setup(t,{webLookup:async()=>{throw Error('offline');}});const c=await(await post('conversation.create',{workerId:'calypso'})).json();
+ await(await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Latest news?'})})).text();
+ assert.match(modelRequests[0].messages.at(-1).content,/live verification failed/);assert.deepEqual(app.state.conversations[0].messages[1].sources,[]);
+});
+test('web routing and RSS decoding keep reference text readable',()=>{
+ assert.equal(needsWeb('Any big news in the world today?'),true);assert.equal(needsWeb('Search for free diagram tools'),true);assert.equal(needsWeb('Write a poem about rain'),false);
+ const entries=parseFeed('<rss><channel><item><title>A &amp; B</title><link>https://example.org/a</link><description>&lt;b&gt;Actual summary&lt;/b&gt;</description></item></channel></rss>');assert.equal(entries[0].summary,'Actual summary');assert.equal(entries[0].title,'A & B');
+});
