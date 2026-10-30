@@ -216,3 +216,44 @@ a:hover {
   background-size: 200% 100%;
   animation: cal-shimmer 1.8s linear infinite;
 }
+
+/* All visible button labels use Title Case across the desktop application. */
+button,[role="button"] {
+  text-transform: capitalize;
+}
+.cal-md details.cal-info-section {
+  border: 1px solid var(--cal-color-border-strong);
+  border-radius: 10px;
+  background: var(--cal-color-raised);
+  overflow: hidden;
+  margin: 5px 0;
+}
+.cal-md details.cal-info-section > summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  list-style: none;
+  font-weight: 600;
+  color: var(--cal-color-text);
+}
+.cal-md details.cal-info-section > summary::-webkit-details-marker { display: none; }
+.cal-md details.cal-info-section > summary::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--cal-color-accent);
+  font-size: 18px;
+}
+.cal-md details.cal-info-section[open] > summary::after { content: "−"; }
+.cal-md details.cal-info-section > summary:hover { background: rgba(255,255,255,0.035); }
+.cal-md .cal-section-number {
+  color: var(--cal-color-accent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 21px;
+}
+.cal-md .cal-section-body {
+  border-top: 1px solid var(--cal-color-border-strong);
+  padding: 13px 18px 16px 26px;
+}
