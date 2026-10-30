@@ -20,19 +20,60 @@ const needed=(v,n=20000)=>typeof v==='string'&&v.trim().length>0&&v.length<=n;
 const inferRole=id=>/coordinator|manager|lead/.test(id)?'coordinator':/research/.test(id)?'researcher':/review|test|qa/.test(id)?'reviewer':'writer';
 export async function tcpReady(port){return new Promise(resolve=>{const s=net.createConnection({host:'127.0.0.1',port});s.setTimeout(700);const done=b=>{s.destroy();resolve(b);};s.on('connect',()=>done(true));s.on('error',()=>done(false));s.on('timeout',()=>done(false));});}
 
-// Only public search/feed providers are contacted; user-supplied URLs are never fetched.
-export const needsWeb=text=>/\b(news|headlines|today|latest|current(?:ly)?|recent|right now|this (?:week|month|year)|look\s*up|search|browse|verify|weather|stock price|who is (?:the )?(?:president|ceo|prime minister))\b/i.test(text);
+// Search only named public feed providers. Never fetch arbitrary user-provided addresses.
+export const isDeathQuery=text=>/\b(celebrity|celebrities|actor|actress|singer|musician|famous|star|obituar(?:y|ies)|deaths?|died|dies|dead|passed away)\b/i.test(text)&&/\b(deaths?|died|dies|dead|passing|passed away|obituar(?:y|ies))\b/i.test(text);
+export const isGeneralNewsQuery=text=>/^\s*(?:any|what(?:'s| is| are)?|give me|show me|tell me about|find|latest|top|today'?s|breaking|world|global|news)\s*(?:the\s*)?(?:(?:big|major|top|latest|current|breaking|world|global)\s*){0,3}(?:news|headlines|stories)(?:\s+(?:in the world|today|right now|this week))?\s*[?.!]*$/i.test(text)||/\b(?:biggest|top|major|world)\s+(?:news|headlines)\b/i.test(text);
+export const needsWeb=text=>/\b(news|headlines|today|tonight|yesterday|tomorrow|latest|current(?:ly)?|recent(?:ly)?|right now|this (?:week|month|year)|look\s*up|search|browse|verify|fact.check|weather|forecast|stock price|election|obituar(?:y|ies)|celebrity deaths?|died|dies|passed away|who is (?:the )?(?:president|ceo|prime minister))\b/i.test(text);
 const xmlText=s=>String(s||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/<[^>]*>/g,' ').replace(/&(?:amp|lt|gt|quot|apos|nbsp);|&#(x[0-9a-f]+|\d+);/gi,(v,n)=>n?String.fromCodePoint(Math.min(0x10ffff,n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n))):({'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&apos;':"'",'&nbsp;':' '}[v.toLowerCase()]||v)).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 export function parseFeed(xml){return [...String(xml).matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)].map(([,item])=>{const field=tag=>xmlText(item.match(new RegExp('<'+tag+'\\b[^>]*>([\\s\\S]*?)<\\/'+tag+'>','i'))?.[1]);return {title:field('title'),url:field('link'),publishedAt:field('pubDate'),summary:field('description').slice(0,900),publisher:field('source')};}).filter(x=>x.title&&/^https?:\/\//.test(x.url));}
-export async function lookupWeb(text,signal){
- const news=/\b(news|headlines|world today)\b/i.test(text),query=text.slice(0,400);
- const broadNews=/\b(world|headlines|big news|top news)\b/i.test(text)||query.split(/\s+/).length<9;const googleNews=broadNews?'https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en':'https://news.google.com/rss/search?q='+encodeURIComponent(query+' when:1d')+'&hl=en-US&gl=US&ceid=US:en';
- const urls=news?(broadNews?['https://feeds.bbci.co.uk/news/world/rss.xml',googleNews]:[googleNews]):['https://www.bing.com/search?format=rss&q='+encodeURIComponent(query)];
- const results=await Promise.allSettled(urls.map(async url=>{const response=await fetch(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(12000)]),headers:{'User-Agent':'Calypso/0.2 (public web research)','Accept':'application/rss+xml, application/xml, text/xml'}});if(!response.ok)throw Error('Web source returned '+response.status);const xml=await response.text();if(xml.length>2000000)throw Error('Web source is too large');return parseFeed(xml).map(s=>({...s,publisher:s.publisher||(url.includes('bbci.co.uk')?'BBC News':new URL(s.url).hostname)}));}));
- const cutoff=Date.now()-3*86400000,seen=new Set();let sources=results.flatMap(r=>r.status==='fulfilled'?r.value:[]).filter(x=>{if(seen.has(x.title))return false;seen.add(x.title);return !news||(Number.isFinite(Date.parse(x.publishedAt))&&Date.parse(x.publishedAt)>cutoff);});
- // Balance two feeds rather than allowing the first provider to fill every slot.
- if(news){const groups=results.filter(r=>r.status==='fulfilled').map(r=>r.value.filter(x=>Date.parse(x.publishedAt)>cutoff));sources=[];for(let i=0;i<4;i++)for(const group of groups)if(group[i]&&!sources.some(x=>x.title===group[i].title))sources.push(group[i]);}
- return {sources:sources.slice(0,8),checkedAt:now(),kind:news?'news':'search'};
+export function webSearchPlan(text){
+ const query=String(text||'').replace(/\s+/g,' ').trim().slice(0,300);
+ const general=isGeneralNewsQuery(query),death=isDeathQuery(query);
+ const news=general||death||/\b(news|headlines|breaking|obituary|election)\b/i.test(query);
+ const window=/(today|tonight|right now|past 24 hours)/i.test(query)?'1d':/(this month|last month|past month)/i.test(query)?'30d':'7d';
+ const google=q=>'https://news.google.com/rss/search?q='+encodeURIComponent(q)+'&hl=en-US&gl=US&ceid=US:en';
+ const bing=q=>'https://www.bing.com/news/search?format=rss&setmkt=en-US&q='+encodeURIComponent(q);
+ let queries,urls;
+ if(general){queries=['world headlines'];urls=['https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en','https://feeds.bbci.co.uk/news/world/rss.xml'];}
+ else if(death){
+  queries=['celebrity actor singer died obituary when:'+window,'"celebrity death" OR "actor dies" OR "singer dies" when:'+window];
+  urls=[google(queries[0]),google(queries[1]),bing('celebrity deaths actor singer died')];
+ }else if(news){
+  const cleaned=query.replace(/^(?:can you|please|tell me|show me|find|any|what(?:'s| is| are)?|latest)\s+/i,'').replace(/[?!]+$/,'');
+  queries=[cleaned+' when:'+window];
+  urls=[google(queries[0]),bing(cleaned)];
+ }else{
+  const cleaned=query.replace(/^(?:can you|please|search for|look up|find|tell me about)\s+/i,'').replace(/[?!]+$/,'');
+  queries=[cleaned];urls=['https://www.bing.com/search?format=rss&q='+encodeURIComponent(cleaned)];
+ }
+ return {news,general,death,query,queries,urls,window};
+}
+export async function lookupWeb(text,signal,fetcher=fetch){
+ const plan=webSearchPlan(text);
+ const results=await Promise.allSettled(plan.urls.map(async url=>{
+  const response=await fetcher(url,{signal:AbortSignal.any([signal||new AbortController().signal,AbortSignal.timeout(12000)]),headers:{'User-Agent':'Calypso/0.3 (public RSS search)','Accept':'application/rss+xml, application/xml, text/xml'}});
+  if(!response.ok)throw Error('Web provider returned '+response.status);
+  const xml=await response.text();if(xml.length>2000000)throw Error('Web feed exceeds size limit');
+  const entries=parseFeed(xml);if(!entries.length)throw Error('Web provider sent no readable results');
+  return entries.map(s=>({...s,publisher:s.publisher||(url.includes('bbc.co.uk')?'BBC News':new URL(s.url).hostname)}));
+ }));
+ const cutoff=Date.now()-(plan.window==='1d'?86400000:plan.window==='30d'?30*86400000:7*86400000);
+ const relevant=source=>{
+  if(plan.news&&Number.isFinite(Date.parse(source.publishedAt))&&Date.parse(source.publishedAt)<cutoff)return false;
+  if(plan.general)return true;
+  if(plan.death)return /\b(died|dies|dead|death|obituar(?:y|ies)|passes away|passed away|killed|mourns|remembering)\b/i.test(source.title);
+  const terms=plan.query.toLowerCase().match(/[a-z0-9]{4,}/g)?.filter(t=>!new Set(['what','when','where','which','have','could','would','about','there','this','that','today','latest','current','recent','news','please','search','show','tell','find','look','up','does','with','from']).has(t))||[];
+  return !terms.length||terms.some(t=>(source.title+' '+source.summary).toLowerCase().includes(t));
+ };
+ const seen=new Set(),groups=results.filter(r=>r.status==='fulfilled').map(r=>r.value.filter(relevant));
+ const sources=[];for(let i=0;i<12&&sources.length<8;i++)for(const group of groups){const item=group[i];if(!item)continue;const key=item.title.toLowerCase().replace(/\s+-\s+[^-]+$/,'').trim();if(seen.has(key))continue;seen.add(key);sources.push(item);}
+ const failed=results.filter(r=>r.status==='rejected').map(r=>r.reason?.message||'Web source unavailable');
+ return {sources,checkedAt:now(),kind:plan.news?'news':'search',general:plan.general,death:plan.death,query:plan.query,providersChecked:plan.urls.length,providersSucceeded:groups.length,error:failed.length===results.length?'All live search providers failed: '+failed.join('; '):null};
+}
+export function deathNewsDigest(web){
+ const sources=(web.sources||[]).slice(0,6),when=new Date(web.checkedAt).toLocaleString('en-US');
+ if(!sources.length)return 'I searched for recent celebrity death reports at '+when+", but couldn't verify a matching report from the available feeds. This does **not** mean no one died. "+(web.error||'The feeds may be incomplete or delayed.');
+ return 'I found '+sources.length+' recent report'+(sources.length===1?'':'s')+' about deaths in entertainment, checked '+when+'. These are publisher headlines; I have not independently confirmed each report.\n\n'+sources.map((s,i)=>String(i+1).padStart(2,'0')+'. ['+s.title.replace(/[\[\]]/g,'')+']('+s.url+') — '+(s.publisher||'News source')+(s.publishedAt?', '+s.publishedAt:'')).join('\n\n');
 }
 
 export function newsBriefing(web){
