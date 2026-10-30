@@ -22,6 +22,12 @@ Open **http://127.0.0.1:18791/**. The web app and bridge need no dependency inst
 
 Custom installs can set `OPENCLAW_CLI` to `openclaw.mjs`, `CALYPSO_NODE` to the Node executable, `CALYPSO_DATA_DIR` to a private data folder, or `PORT` to a different listening port.
 
+## Updating the local engine
+
+Changes to this GitHub repository and the published web interface do not automatically update a Calypso engine already running on your computer. To install fixes to chat, search, and other local features, stop the existing Calypso process (Ctrl+C in its terminal, or quit the desktop app), update the source with `git pull` in the Calypso repository folder, then restart it with `npm start`. Refresh the web app and pair the browser again if prompted. On packaged desktop installs, install a newly built desktop release instead of running `git pull` inside the package. The Conversations screen warns when the paired engine does not advertise updated live search support.
+
+Live searches use public RSS/news feeds. Sources can be missing, delayed or unreachable, and no-feed results are not proof that a reported event never occurred. Direct conversation uses local Ollama models for most questions; background project tools use OpenClaw.
+
 ## Live GitHub app
 
 GitHub Actions tests and publishes the app on every push to `main`. The hosted interface saves project drafts, agent profiles, teams, paused routines, and memories in that browser. It does not pretend to run agents while disconnected.
