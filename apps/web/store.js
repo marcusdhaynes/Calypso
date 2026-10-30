@@ -2,14 +2,14 @@ const KEY='calypso.workspace.v2',ENDPOINT='http://127.0.0.1:18791';
 const id=()=>crypto.randomUUID(),at=()=>new Date().toISOString();
 const seed=()=>({version:2,revision:0,workers:[['coordinator','Calypso','coordinator','Scope the project and organize the crew.'],['researcher','Scout','researcher','Gather evidence and compare possibilities.'],['writer','Maker','writer','Build useful, verified deliverables.'],['reviewer','Lens','reviewer','Independently check the results.']].map(([id,name,role,instructions])=>({id,name,role,instructions,engine:'local',createdAt:at()})),teams:[{id:'default',name:'Calypso crew',description:'A small, focused team for big ideas.',workerIds:['coordinator','researcher','writer','reviewer']}],projects:[],conversations:[],routines:[],memories:[],settings:{model:'',theme:'dark',freeOnly:true,speech:false},activity:[]});
 let local;try{local=JSON.parse(localStorage.getItem(KEY))||seed();}catch{local=seed();}
-export const workspace={state:local,connected:false,status:null,base:location.hostname==='127.0.0.1'||location.hostname==='localhost'?location.origin:ENDPOINT,token:sessionStorage.getItem('calypso.bridge.token')||'',bridgeReachable:false,connectionIssue:null,connectionError:'',failedRefreshes:0,listeners:new Set()};
+export const workspace={state:local,connected:false,status:null,base:location.hostname==='127.0.0.1'||location.hostname==='localhost'?location.origin:ENDPOINT,token:sessionStorage.getItem('calypso.bridge.token')||'',bridgeReachable:false,needsEngineUpdate:false,connectionIssue:null,connectionError:'',failedRefreshes:0,listeners:new Set()};
 function saveLocal(){local.revision++;localStorage.setItem(KEY,JSON.stringify(local));}
 export function subscribe(fn){workspace.listeners.add(fn);return()=>workspace.listeners.delete(fn);}
 function emit(){for(const fn of workspace.listeners)fn();}
 export async function request(route,body){const r=await fetch(workspace.base+route,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(workspace.token?{Authorization:'Bearer '+workspace.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(route==='/api/action'?200000:5000)});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Local workspace request failed');error.status=r.status;throw error;}return d;}
 export async function connect(){
  // Probe the bridge separately from its authenticated workspace: running is not paired.
- try{await request('/health');workspace.bridgeReachable=true;}
+ try{const probe=await request('/health');workspace.bridgeReachable=true;workspace.needsEngineUpdate=probe.liveSearch!==true;}
  catch(error){workspace.connected=false;workspace.bridgeReachable=false;workspace.connectionIssue='unreachable';workspace.connectionError=error.message;workspace.state=local;emit();return false;}
  try{
   const remote=await request('/api/state');
