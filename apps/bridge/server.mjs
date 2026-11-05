@@ -158,9 +158,9 @@ export function createCalypso(options={}){
   else{
    const courseReview=isCourseProject(p)&&t.role==='reviewer';
    const missing=courseReview?courseMinimumFiles().filter(name=>{try{return fs.statSync(path.join(p.folder,name)).size<100;}catch{return true;}}):[];
-   const changes=courseReview&&(/\\bNEEDS_CHANGES\\b/.test(t.result)||missing.length>0);
+   const changes=courseReview&&(/\bNEEDS_CHANGES\b/.test(t.result)||missing.length>0);
    if(changes){
-    const feedback=t.result+'\\nMissing or empty essential course artifacts: '+(missing.join(', ')||'none');
+    const feedback=t.result+'\nMissing or empty essential course artifacts: '+(missing.join(', ')||'none');
     p.courseReviewFeedback=feedback;
     p.courseRevisionCount=(p.courseRevisionCount||0)+1;
     const writerTask=p.tasks.find(x=>x.role==='writer');
