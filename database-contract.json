@@ -28,5 +28,14 @@
   "current_stage": "database_reserved_not_live",
   "source_data_migrated": false,
   "docs": "AGENTS.md",
-  "canonical_map": "marcusdhaynes/somniel-holdings/database-routing.json"
+  "canonical_map": "marcusdhaynes/somniel-holdings/database-routing.json",
+  "domain_storage_guidance": {
+    "store": [
+      "Durable cross-device bot, course, project, and memory data that the user explicitly chooses to synchronize"
+    ],
+    "avoid": [
+      "Unencrypted tool credentials, local caches, OS machine state and unrelated personal data"
+    ],
+    "cutover": "Preserve the local SQLite/offline worker path until SQLite source data is migrated and identical worker behavior is proven."
+  }
 }
