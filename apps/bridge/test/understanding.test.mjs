@@ -41,3 +41,19 @@ test('fiction evidence queries do not become recent obituary feeds',()=>{
  const p=webSearchPlan('Dresden Files character death',{generalSearch:true});
  assert.equal(p.news,false);assert.equal(p.death,false);assert.match(p.urls[0],/bing.com\/search/);
 });
+
+test('saved context reaches subject interpretation before any drafting',async()=>{
+ let prompt='';
+ await understand({messages,context:'Videos refer to the novels, not the TV adaptation; avoid spoilers after book three.',complete:async m=>{prompt=m[0].content;return JSON.stringify(plan);}});
+ assert.match(prompt,/avoid spoilers after book three/);
+});
+test('null review verdicts fail safely and trigger bounded correction',async()=>{
+ let calls=0;
+ const result=await createResponse({plan:{...plan,research:false},messages,lookup:async()=>assert.fail(),complete:async(m,o)=>{calls++;return o.json?'null':'Draft';}});
+ assert.equal(result.reviewPassed,false);assert.equal(calls,6);
+});
+test('malformed search entries do not prevent useful sources from being used',async()=>{
+ let i=0;
+ const result=await createResponse({plan,messages,lookup:async()=>++i===1?null:{sources:[null,{url:'javascript:alert(1)'},{title:'Valid',url:'https://example.org/source',summary:'Evidence'}]},complete:async(m,o)=>o.json?'{"pass":true,"issues":[]}':'Draft'});
+ assert.equal(result.sources.length,1);assert.equal(result.sources[0].title,'Valid');assert.equal(result.failures.length,1);
+});

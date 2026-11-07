@@ -255,7 +255,8 @@ export function createCalypso(options={}){
       const content=visibleStream().push(data.message?.content||'',true);if(!content.trim())throw Error('The model returned an empty result.');return content;
      });
      send({status:'Understanding the request and resolving its subject.'});
-     const plan=await (options.understand||understand)({messages:history,complete,signal:abort.signal});
+     const preferenceContext=(w?.instructions||'')+'\n'+state.memories.filter(m=>m.scope==='global'||m.scope==='worker:'+c.workerId||m.scope==='team:'+c.teamId).slice(-8).map(m=>m.content).join('\n').slice(0,4000);
+     const plan=await (options.understand||understand)({messages:history,complete,signal:abort.signal,context:preferenceContext});
      answer.interpretation=plan;
      if(plan.mode==='clarify'){
       answer.content=plan.question;answer.choices=plan.choices;answer.status='done';send({delta:answer.content});send({done:true});return;

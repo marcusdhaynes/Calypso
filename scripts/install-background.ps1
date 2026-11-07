@@ -21,7 +21,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $calypsoData 'state.json'))) {
     }
 }
 foreach ($part in @('apps\bridge','apps\web','scripts')) { New-Item -ItemType Directory -Force (Join-Path $calypsoEngine $part) | Out-Null }
-Copy-Item -LiteralPath (Join-Path $calypsoSource 'apps\bridge\server.mjs') -Destination (Join-Path $calypsoEngine 'apps\bridge\server.mjs')
+# Install every runtime module: server.mjs imports the authoring and understanding workflows.
+Get-ChildItem -LiteralPath (Join-Path $calypsoSource 'apps\bridge') -Filter '*.mjs' -File | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $calypsoEngine ('apps\bridge\' + $_.Name)) -Force
+}
 foreach ($asset in @('index.html','app.js','store.js','styles.css','icon.svg','manifest.webmanifest','sw.js')) {
     Copy-Item -LiteralPath (Join-Path $calypsoSource ('apps\web\' + $asset)) -Destination (Join-Path $calypsoEngine ('apps\web\' + $asset))
 }

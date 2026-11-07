@@ -14,8 +14,8 @@ export function parsePlan(raw) {
   research:p.research===true,queries:[...new Set((Array.isArray(p.queries)?p.queries:[]).map(x=>clean(x,240)).filter(Boolean))].slice(0,4)};
 }
 
-export async function understand({messages,complete,signal}) {
- const instruction=`Interpret the latest request in conversation context. ${taskContract}
+export async function understand({messages,complete,signal,context=''}) {
+ const instruction=`Interpret the latest request in conversation context. ${taskContract}\nRelevant saved preferences and standing instructions (the latest user request takes precedence): ${clean(context,6000)}
 Return JSON only: {"mode":"answer|create|clarify","subject":"resolved subject including work/franchise where relevant","goal":"complete requested deliverable","assumptions":"reasonable defaults","research":true,"queries":["up to four focused evidence searches"],"question":"only for indispensable clarification","choices":["two or three distinct interpretations"]}.
 Use create for scripts, essays, lists of ideas, plans and other substantial deliverables. Use answer for ordinary questions or greetings. Use clarify only for genuine unresolved ambiguity, not missing optional preferences. Research factual or unfamiliar topics even if the user never says search. Pure transformations of supplied text and original fiction need no research. Search for the subject and evidence, not the entire instruction. Honor explicit no-browsing requests. Do not fabricate a franchise for an unknown name.`;
  let raw=await complete([{role:'system',content:instruction},...messages],{json:true,tokens:1400,signal});
@@ -34,8 +34,9 @@ export async function createResponse({plan,messages,complete,lookup,signal,onSta
   for(const result of results){
    if(signal?.aborted)throw signal.reason||Error('Stopped');
    if(result.status==='rejected'){failures.push(String(result.reason?.message||'Search unavailable'));continue;}
+   if(!result.value||typeof result.value!=='object'){failures.push('Search returned an invalid result');continue;}
    if(result.value.error)failures.push(result.value.error);
-   for(const s of result.value.sources||[]){if(sources.length>=16)break;if(!/^https?:\/\//.test(s.url)||sources.some(x=>x.url===s.url))continue;sources.push({...s,summary:clean(s.summary,1800)});}
+   for(const s of Array.isArray(result.value.sources)?result.value.sources:[]){if(sources.length>=16)break;if(!s||typeof s.url!=='string'||!/^https?:\/\//.test(s.url)||sources.some(x=>x.url===s.url))continue;sources.push({title:clean(s.title,500),url:clean(s.url,2048),publisher:clean(s.publisher,200),publishedAt:clean(s.publishedAt,100),summary:clean(s.summary,1800)});}
   }
  }
  const evidence=JSON.stringify(sources.map((s,i)=>({number:i+1,...s})));
@@ -47,10 +48,10 @@ export async function createResponse({plan,messages,complete,lookup,signal,onSta
   onStatus(round?'Checking the corrected result.':'Checking accuracy and completeness.');
   const raw=await complete([{role:'system',content:system+'\nYou are the reviewer. Audit the draft against the request and evidence. Return JSON {"pass":boolean,"issues":["specific actionable defects"]}. Reject unsupported factual specifics, fake quotations, missing requested sections/counts, invented metrics, and plans substituted for deliverables.'},...messages,{role:'assistant',content:draft}],{json:true,tokens:1800,signal});
   let review;try{review=JSON.parse(raw);}catch{review={pass:false,issues:['Review returned invalid structured output; independently check the draft.']};}
-  if(review.pass===true&&Array.isArray(review.issues)&&!review.issues.length){passed=true;break;}
+  if(review?.pass===true&&Array.isArray(review.issues)&&!review.issues.length){passed=true;break;}
   if(round===2)break;
   onStatus('Correcting gaps found during review.');
-  draft=await complete([{role:'system',content:system},...messages,{role:'assistant',content:draft},{role:'user',content:'Revise the complete deliverable to resolve these review findings. Return the whole corrected result, not a revision plan. Findings: '+JSON.stringify(review.issues||['Review did not pass.'])}],{tokens:10000,signal});
+  draft=await complete([{role:'system',content:system},...messages,{role:'assistant',content:draft},{role:'user',content:'Revise the complete deliverable to resolve these review findings. Return the whole corrected result, not a revision plan. Findings: '+JSON.stringify(review?.issues||['Review did not pass.'])}],{tokens:10000,signal});
  }
  return {content:draft,sources,reviewPassed:passed,verificationIncomplete:plan.research&&!sources.length,failures};
 }
