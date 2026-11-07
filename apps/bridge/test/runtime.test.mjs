@@ -19,6 +19,38 @@ async function setup(t,extra={}){
 }
 async function until(fn){for(let i=0;i<200;i++){if(fn())return;await new Promise(r=>setTimeout(r,10));}throw Error('Timed out waiting for test run');}
 
+test('creative chat resolves the subject, researches, revises and saves the complete answer',async t=>{
+ const queries=[];let calls=0;
+ const {post,base,app}=await setup(t,{
+  understand:async()=>({mode:'create',subject:'Doflamingo, One Piece',goal:'Full video essay script',research:true,queries:['Doflamingo One Piece']}),
+  webLookup:async q=>{queries.push(q);return {sources:[{title:'Reference',url:'https://example.org/reference',summary:'Supporting evidence'}]};},
+  complete:async(m,o)=>{calls++;return ['First script','{"pass":false,"issues":["Develop the conclusion"]}','Complete corrected script','{"pass":true,"issues":[]}'][calls-1];}
+ });
+ const c=await(await post('conversation.create',{workerId:'calypso'})).json();
+ const r=await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Write a video essay on Doflamingo'})});
+ const stream=await r.text();assert.match(stream,/Complete corrected script/);assert.deepEqual(queries,['Doflamingo One Piece']);
+ const answer=app.state.conversations[0].messages.at(-1);assert.equal(answer.reviewPassed,true);assert.equal(answer.sources.length,1);assert.equal(answer.status,'done');
+});
+
+test('ambiguous chat saves selectable choices without researching or drafting a guess',async t=>{
+ const {post,base,app}=await setup(t,{understand:async()=>({mode:'clarify',subject:'Mercury',question:'Which Mercury?',choices:['The planet','The element']}),complete:async()=>assert.fail(),webLookup:async()=>assert.fail()});
+ const c=await(await post('conversation.create',{workerId:'calypso'})).json();
+ await(await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:c.id,text:'Write about Mercury'})})).text();
+ const answer=app.state.conversations[0].messages.at(-1);assert.deepEqual(answer.choices,['The planet','The element']);assert.equal(answer.content,'Which Mercury?');
+});
+
+test('non-course project review triggers an automatic writer correction',async t=>{
+ let reviews=0,writes=0;
+ const {post,app}=await setup(t,{invokeAgent:async({task,project,prompt})=>{
+  if(task.role==='writer'){writes++;if(writes===2)assert.match(prompt,/Fix the conclusion/);fs.writeFileSync(path.join(project.folder,'script.md'),'Script');}
+  const text=task.role==='reviewer'&&++reviews===1?'NEEDS_CHANGES: Fix the conclusion':'Done. No blockers.';
+  return {ok:true,text,tools:['read','write']};
+ }});
+ await post('worker.create',{id:'reviewer-test',name:'Reviewer',role:'reviewer'});
+ await post('project.create',{name:'Video essay',description:'Write a complete script',workerIds:['calypso','reviewer-test']});
+ await until(()=>app.state.projects[0]?.status==='review');assert.equal(writes,2);assert.equal(reviews,2);
+});
+
 test('free-only policy rejects cloud tags, remote-backed models and empty downloads',()=>{assert.equal(isLocalModel({name:'lfm2.5:8b',size:5000}),true);assert.equal(isLocalModel({name:'gpt:cloud',size:5000}),false);assert.equal(isLocalModel({name:'remote',size:5000,remote_host:'https://provider.invalid'}),false);assert.equal(isLocalModel({name:'empty',size:0}),false);assert.equal(blockedReply('BLOCKED: none.'),false);assert.equal(blockedReply('No blockers.'),false);assert.equal(blockedReply('BLOCKED: missing source file'),true);});
 test('model reasoning tags split across streamed chunks are never displayed',()=>{const f=visibleStream();let result='';for(const part of ['<thi','nk>hidden deliberation<','/think>','Visible ','answer.'])result+=f.push(part);result+=f.push('',true);assert.equal(result,'Visible answer.');const unfinished=visibleStream();assert.equal(unfinished.push('<think>unfinished',true),'');});
 test('real project lifecycle persists results and requires explicit completion',async t=>{const {app,post,base}=await setup(t);const r=await post('project.create',{name:'Test project',description:'Create a file',workerIds:['calypso']});assert.equal(r.status,200);const p=await r.json();await until(()=>app.state.projects[0].status==='review');assert.equal(app.state.projects[0].tasks[0].status,'done');const files=await (await fetch(base+'/api/artifacts')).json();assert.ok(files.some(f=>f.name==='result.txt'));assert.equal(await(await fetch(base+'/api/file/'+p.id+'/result.txt')).text(),'ACTUAL_TEST_FILE');assert.equal((await post('project.action',{id:p.id,action:'complete'})).status,200);assert.equal(app.state.projects[0].status,'done');const stored=JSON.parse(fs.readFileSync(path.join(app.dataRoot,'state.json'),'utf8'));assert.equal(stored.projects[0].status,'done');});
@@ -130,3 +162,4 @@ test('exact user wording searches celebrity obituaries instead of AnyDesk or dic
  assert.match(deathNewsDigest(result),/example.org\/story\/2/);
  assert.match(deathNewsDigest({sources:[],checkedAt:new Date().toISOString()}),/not\*\* proof/i);
 });
+
