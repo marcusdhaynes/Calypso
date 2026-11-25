@@ -10,6 +10,8 @@ import {profiles,serverArgs,selectWinner,bench,gpu,freeDisk,stop} from './benchm
 
 export const MODEL_ID='calypso-35b',PROVIDER_ID='calypso-llama',PORT=18792;
 const TAG='b12722';
+const MODEL_HASHES={'UD-IQ4_XS':'649d7508507b84638732c4f52c24c8b15843c6dca2f3ff793ae07c14a67ebbb3','UD-IQ3_XXS':'9c964e657212fea1f24905dd7b0a89b82fd807d19fab0b41da14251b07b88fbe'};
+const MODEL_ORIGIN='https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/';
 const ASSETS=[
  ['llama-b12722-bin-win-cuda-12.4-x64.zip','7f2655c88e80b30cbf94cbd2be0deb46c04920b6fd2c761d167fe443c0c07ed1'],
  ['cudart-llama-bin-win-cuda-12.4-x64.zip','8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6']
@@ -19,7 +21,28 @@ export function eligible({platform=process.platform,arch=process.arch,ramGiB=os.
  return platform==='win32'&&arch==='x64'&&ramGiB>=14&&ramGiB<28&&device?.totalMiB>=7500;
 }
 export function providerConfig(key,context=8192){
- return {baseUrl:'http://127.0.0.1:'+PORT+'/v1',apiKey:key,api:'openai-completions',models:[{id:MODEL_ID,name:'Calypso Qwen3.6 35B (local CUDA)',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:context,maxTokens:2048}]};
+ return {baseUrl:'http://127.0.0.1:'+PORT+'/v1',apiKey:key,api:'openai-completions',timeoutSeconds:300,models:[{id:MODEL_ID,name:'Calypso Qwen3.6 35B (local CUDA)',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:context,maxTokens:2048,compat:{toolSchemaProfile:'llamacpp'}}]};
+}
+export async function prepareWeights(profile,cache,signal,report){
+ const name='Qwen3.6-35B-A3B-'+profile.quant+'.gguf',sha=MODEL_HASHES[profile.quant],file=path.join(cache,name),marker=file+'.verified',partial=file+'.partial';
+ if(!sha)throw Error('Unknown model artifact');
+ if(fs.existsSync(file)){
+  const stat=fs.statSync(file);let saved;try{saved=JSON.parse(fs.readFileSync(marker,'utf8'));}catch{}
+  if(saved?.sha===sha&&saved.size===stat.size&&saved.mtime===stat.mtimeMs)return file;
+  const digest=crypto.createHash('sha256');
+  for await(const chunk of fs.createReadStream(file)){signal.throwIfAborted();digest.update(chunk);}
+  if(digest.digest('hex')!==sha)throw Error('Cached model hash mismatch: '+name+'; remove the corrupt file and retry.');
+  fs.writeFileSync(marker,JSON.stringify({sha,size:stat.size,mtime:stat.mtimeMs}));return file;
+ }
+ if(freeDisk(cache)<(profile.gb+8)*1e9)throw Error('Insufficient disk space for '+name+' with 8 GB reserve.');
+ const r=await fetch(MODEL_ORIGIN+name,{signal:AbortSignal.any([signal,AbortSignal.timeout(12*60*60*1000)])});
+ if(!r.ok||!r.body)throw Error('Model download failed: '+r.status);
+ const expected=Number(r.headers.get('content-length'))||profile.gb*1e9,hash=crypto.createHash('sha256');let count=0,last=-1;
+ try{
+  await pipeline(Readable.fromWeb(r.body),new Transform({transform(chunk,encoding,cb){hash.update(chunk);count+=chunk.length;const percent=Math.min(99,Math.floor(count/expected*100));if(percent!==last){last=percent;report('downloading','Downloading '+profile.quant+' · '+percent+'%',{percent});}cb(null,chunk);}}),fs.createWriteStream(partial,{flags:'w'}),{signal});
+  if(hash.digest('hex')!==sha)throw Error('Model download SHA-256 mismatch: '+name);
+  fs.renameSync(partial,file);const stat=fs.statSync(file);fs.writeFileSync(marker,JSON.stringify({sha,size:stat.size,mtime:stat.mtimeMs}));return file;
+ }finally{fs.rmSync(partial,{force:true});}
 }
 async function install(root,signal,report){
  const override=process.env.CALYPSO_LLAMA_SERVER;
@@ -46,20 +69,20 @@ async function install(root,signal,report){
   fs.renameSync(stage,dest);return bin;
  }finally{fs.rmSync(stage,{recursive:true,force:true});}
 }
-export function createManagedLlama({dataRoot,onUpdate=()=>{},hardware=()=>({platform:process.platform,arch:process.arch,ramGiB:os.totalmem()/2**30,device:gpu()}),installer=install,benchmark=bench}={}){
+export function createManagedLlama({dataRoot,onUpdate=()=>{},hardware=()=>({platform:process.platform,arch:process.arch,ramGiB:os.totalmem()/2**30,device:gpu()}),installer=install,benchmark=bench,weights=prepareWeights}={}){
  const root=path.join(dataRoot,'local-inference'),cache=path.join(root,'gguf'),logs=path.join(root,'logs'),receipt=path.join(root,'selection.json');
  let status={phase:'idle',message:'Checking optimized local inference.'},pending=null,child=null,controller=null,key=null,ready=false,closed=false;
  const report=(phase,message,extra={})=>{status={phase,message,...extra};onUpdate(status);};
  function auth(){return {Authorization:'Bearer '+key};}
  async function halt(){ready=false;const c=child;child=null;if(c)await stop(c);}
- async function launch(binary,p,threads,context,signal){
+ async function launch(binary,p,threads,context,signal,modelPath){
   await halt();signal.throwIfAborted();
   // Never reuse an unknown service on this port.
   try{await fetch('http://127.0.0.1:'+PORT+'/health',{signal:AbortSignal.timeout(600)});throw Error('Calypso inference port 18792 is occupied.');}catch(e){if(e.message.includes('occupied'))throw e;}
   const keyPath=path.join(root,'local-key');
   if(!fs.existsSync(keyPath))fs.writeFileSync(keyPath,crypto.randomBytes(32).toString('hex'),{flag:'wx',mode:0o600});
   key=fs.readFileSync(keyPath,'utf8').trim();if(!/^[a-f0-9]{64}$/.test(key))throw Error('Invalid local inference credential.');
-  const args=serverArgs(p,PORT,threads,context).concat(['--api-key',key]);
+  const args=serverArgs(p,PORT,threads,context,modelPath).concat(['--api-key',key]);
   const log=fs.createWriteStream(path.join(logs,'server.log'),{flags:'a'});
   const c=child=spawn(binary,args,{windowsHide:true,env:{...process.env,LLAMA_CACHE:cache},stdio:['ignore','pipe','pipe']});
   c.stdout.pipe(log,{end:false});c.stderr.pipe(log,{end:false});let error=null;c.on('error',e=>{error=e.message;});
@@ -73,28 +96,35 @@ export function createManagedLlama({dataRoot,onUpdate=()=>{},hardware=()=>({plat
   throw Error('Optimized model server readiness timed out.');
  }
  async function run(signal,force){
-  const hw=hardware();if(!eligible(hw))return null;
+  await halt();const hw=hardware();if(!eligible(hw))return null;
   if(hw.device.freeMiB<6500||os.freemem()/2**30<8)throw Error('Close GPU-heavy apps or exit Ollama to free at least 6.5 GB VRAM and 8 GiB RAM; then retry automatic setup.');
   for(const d of [root,cache,logs])fs.mkdirSync(d,{recursive:true});
   if(freeDisk(root)<2e9)throw Error('Not enough disk space for the CUDA runtime.');
-  const binary=await installer(root,signal,report),threads=Math.max(1,Math.min(6,os.cpus().length)),context=8192;
-  const fingerprint=JSON.stringify({revision:1,tag:TAG,binary,device:hw.device.name,ram:Math.round(hw.ramGiB),cpu:os.cpus()[0]?.model});
+  const binary=await installer(root,signal,report),threads=Math.max(1,Math.min(6,os.cpus().length));
+  const fingerprint=JSON.stringify({revision:2,tag:TAG,binary,device:hw.device.name,ram:Math.round(hw.ramGiB),cpu:os.cpus()[0]?.model});
   let winner=null;
   if(!force)try{const saved=JSON.parse(fs.readFileSync(receipt,'utf8'));if(saved.fingerprint===fingerprint&&profiles.some(p=>p.name===saved.winner?.profile)&&selectWinner([saved.winner]))winner=saved.winner;}catch{}
   if(!winner){
    const results=[];
    for(const p of profiles){
     signal.throwIfAborted();
-    if(freeDisk(cache)<(p.gb+8)*1e9){results.push({profile:p.name,error:'Insufficient disk reserve'});continue;}
     report('downloading','Preparing '+p.quant+' (approximately '+p.gb+' GB).');
-    try{results.push(await benchmark(p,{binary,cache,logs,threads,context,signal,onProgress:message=>report(message.startsWith('Benchmarking')?'testing':'downloading',message)}));}catch(e){if(signal.aborted)throw e;results.push({profile:p.name,error:e.message});}
+    try{
+     const modelPath=await weights(p,cache,signal,report);
+     // Prefer a 16K agent context. Retry with 8K only if that fails.
+     for(const context of [16384,8192]){
+      signal.throwIfAborted();report('testing','Testing '+p.quant+' at '+context+' tokens…');
+      try{const result=await benchmark(p,{binary,cache,logs,threads,context,modelPath,signal,onProgress:message=>report(message.startsWith('Benchmarking')?'testing':'starting',message)});results.push(result);if(selectWinner([result]))break;}catch(e){if(signal.aborted)throw e;results.push({profile:p.name,context,error:e.message});}
+     }
+    }catch(e){if(signal.aborted)throw e;results.push({profile:p.name,error:e.message});}
    }
    winner=selectWinner(results);fs.writeFileSync(receipt,JSON.stringify({fingerprint,winner,results},null,2));
    if(!winner)throw Error('Neither 35B profile passed the speed, tool and memory checks. See local benchmark logs.');
   }
   report('starting','Starting verified '+winner.quant+' model…');
-  await launch(binary,profiles.find(p=>p.name===winner.profile),threads,context,signal);
-  report('ready',winner.quant+' ready · '+winner.tokensPerSecond.toFixed(1)+' tokens/sec',{model:MODEL_ID,tps:winner.tokensPerSecond,quant:winner.quant,context});
+  const profile=profiles.find(p=>p.name===winner.profile);const modelPath=await weights(profile,cache,signal,report);
+  await launch(binary,profile,threads,winner.context,signal,modelPath);
+  report('ready',winner.quant+' ready · '+winner.tokensPerSecond.toFixed(1)+' tokens/sec',{model:MODEL_ID,tps:winner.tokensPerSecond,quant:winner.quant,context:winner.context});
   return MODEL_ID;
  }
  return {get status(){return status;},get ready(){return ready;},get config(){if(!ready)throw Error('Optimized inference not ready');return providerConfig(key,status.context);},

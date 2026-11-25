@@ -16,3 +16,5 @@ test('SSE adapter ignores reasoning, streams only content, and completes',async(
  const r=await openAIAsOllama(new Response('data: {"choices":[{"delta":{"reasoning_content":"secret"}}]}\n\ndata: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),true);
  const text=await r.text();assert.match(text,/Hello/);assert.match(text,/"done":true/);assert.doesNotMatch(text,/secret/);
 });
+
+test('provider context describes the actual selected context',()=>{assert.equal(providerConfig('test',16384).models[0].contextWindow,16384);});
