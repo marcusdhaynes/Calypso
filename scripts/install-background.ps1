@@ -25,7 +25,7 @@ foreach ($part in @('apps\bridge','apps\web','scripts')) { New-Item -ItemType Di
 Get-ChildItem -LiteralPath (Join-Path $calypsoSource 'apps\bridge') -Filter '*.mjs' -File | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $calypsoEngine ('apps\bridge\' + $_.Name)) -Force
 }
-foreach ($asset in @('index.html','app.js','store.js','styles.css','icon.svg','manifest.webmanifest','sw.js')) {
+foreach ($asset in @('index.html','app.js','store.js','styles.css','icon.svg','manifest.webmanifest','sw.js','updates.js')) {
     Copy-Item -LiteralPath (Join-Path $calypsoSource ('apps\web\' + $asset)) -Destination (Join-Path $calypsoEngine ('apps\web\' + $asset))
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'keep-alive.ps1') -Destination (Join-Path $calypsoEngine 'scripts\keep-alive.ps1')

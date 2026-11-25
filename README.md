@@ -28,9 +28,7 @@ For 8 GB VRAM / 16 GB RAM systems, the separate [llama.cpp benchmark](docs/35B-B
 
 ## Updating the local engine
 
-Changes to this GitHub repository and the published web interface do not automatically update a Calypso engine already running on your computer. To install fixes to chat, search, and other local features, stop the existing Calypso process (Ctrl+C in its terminal, or quit the desktop app), update the source with `git pull` in the Calypso repository folder, then restart it with `npm start`. Refresh the web app and pair the browser again if prompted. On packaged desktop installs, install a newly built desktop release instead of running `git pull` inside the package. The Conversations screen warns when the paired engine does not advertise updated live search support.
-
-Live searches use public RSS/news feeds. Sources can be missing, delayed or unreachable, and no-feed results are not proof that a reported event never occurred. Direct conversation uses local Ollama models for most questions; background project tools use OpenClaw.
+Calypso checks for tested engine builds automatically. Windows users with an older engine should run [Install / Update Calypso](https://marcusdhaynes.github.io/Calypso/Install-Calypso.cmd) once. It preserves the existing data directory and installs a local supervisor. Future updates are downloaded from the CI-published manifest, checked against SHA-256, staged separately, and applied when no agent, conversation, model setup or verification is running. A failed engine startup restores the previous working build. No Git checkout or manual Node restart is needed for managed installations. Explicitly approved browser pairing persists across managed restarts for up to 30 days. The initial upgrade may require pairing once again because older engines stored pairing only in memory. The Windows installer requires existing Node.js 22+ and must be explicitly run. For source installations, `npm start` launches the same supervisor. Offline operation uses the last installed engine.
 
 ## Live GitHub app
 

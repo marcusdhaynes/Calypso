@@ -2,14 +2,14 @@ const KEY='calypso.workspace.v2',ENDPOINT='http://127.0.0.1:18791';
 const id=()=>crypto.randomUUID(),at=()=>new Date().toISOString();
 const seed=()=>({version:2,revision:0,workers:[['coordinator','Calypso','coordinator','Scope the project and organize the crew.'],['researcher','Scout','researcher','Gather evidence and compare possibilities.'],['writer','Maker','writer','Build useful, verified deliverables.'],['reviewer','Lens','reviewer','Independently check the results.']].map(([id,name,role,instructions])=>({id,name,role,instructions,engine:'local',createdAt:at()})),teams:[{id:'default',name:'Calypso crew',description:'A small, focused team for big ideas.',workerIds:['coordinator','researcher','writer','reviewer']}],projects:[],conversations:[],routines:[],memories:[],settings:{model:'',theme:'dark',freeOnly:true,speech:false},activity:[]});
 let local;try{local=JSON.parse(localStorage.getItem(KEY))||seed();}catch{local=seed();}
-export const workspace={state:local,connected:false,status:null,base:location.hostname==='127.0.0.1'||location.hostname==='localhost'?location.origin:ENDPOINT,token:sessionStorage.getItem('calypso.bridge.token')||'',bridgeReachable:false,needsEngineUpdate:false,connectionIssue:null,connectionError:'',failedRefreshes:0,listeners:new Set()};
+export const workspace={state:local,connected:false,status:null,base:location.hostname==='127.0.0.1'||location.hostname==='localhost'?location.origin:ENDPOINT,token:sessionStorage.getItem('calypso.bridge.token')||'',bridgeReachable:false,needsEngineUpdate:false,managedUpdates:false,connectionIssue:null,connectionError:'',failedRefreshes:0,listeners:new Set()};
 function saveLocal(){local.revision++;localStorage.setItem(KEY,JSON.stringify(local));}
 export function subscribe(fn){workspace.listeners.add(fn);return()=>workspace.listeners.delete(fn);}
 function emit(){for(const fn of workspace.listeners)fn();}
 export async function request(route,body){const r=await fetch(workspace.base+route,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(workspace.token?{Authorization:'Bearer '+workspace.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(route==='/api/action'?200000:5000)});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Local workspace request failed');error.status=r.status;throw error;}return d;}
 export async function connect(){
  // Probe the bridge separately from its authenticated workspace: running is not paired.
- try{const probe=await request('/health');workspace.bridgeReachable=true;workspace.needsEngineUpdate=probe.liveSearch!==true||probe.searchRevision!==2||Number(probe.understandingRevision||0)<1;}
+ try{const probe=await request('/health');workspace.bridgeReachable=true;workspace.managedUpdates=probe.managedUpdates===true;workspace.needsEngineUpdate=!workspace.managedUpdates;}
  catch(error){workspace.connected=false;workspace.bridgeReachable=false;workspace.connectionIssue='unreachable';workspace.connectionError=error.message;workspace.state=local;emit();return false;}
  try{
   const remote=await request('/api/state');
@@ -23,7 +23,7 @@ export async function connect(){
  }
 }
 export async function refresh(){
- if(!workspace.connected)return;
+ if(!workspace.connected){if(workspace.bridgeReachable||workspace.token||location.origin===workspace.base)await connect();return;}
  try{const s=await request('/api/state?revision='+workspace.state.revision);workspace.failedRefreshes=0;if(!s.unchanged){workspace.state=s;emit();}}
  catch(error){
   if(error.status===401||error.status===403){workspace.connected=false;workspace.connectionIssue=error.status===401?'pairing':'permission';workspace.connectionError=error.message;workspace.state=local;emit();return;}
@@ -73,6 +73,7 @@ export async function action(type,b={}){
  else if(type==='routine.delete'){local.routines=local.routines.filter(r=>r.id!==b.id);result={ok:true};}
  else if(type==='memory.save'){if(!b.content?.trim())throw Error('Enter a memory.');result={...b,id:b.id||id(),createdAt:at()};const i=local.memories.findIndex(m=>m.id===result.id);if(i>=0)local.memories[i]=result;else local.memories.push(result);}
  else if(type==='memory.delete'){local.memories=local.memories.filter(m=>m.id!==b.id);result={ok:true};}
+ else if(type==='engine.update'){throw Error('Connect the local engine first.');}
  else if(type==='model.auto'){throw Error('Connect your computer to set up the local model.');}
  else if(type==='settings.update'){if(b.freeOnly===false||b.cloudModelsEnabled||b.apiKey||b.baseUrl)throw Error('Only free local models are allowed.');Object.assign(local.settings,{theme:b.theme||local.settings.theme,speech:b.speech??local.settings.speech,freeOnly:true});result=local.settings;}
  else if(type==='project.action'){const p=local.projects.find(p=>p.id===b.id);if(!p)throw Error('Project not found.');return launchLocally(p,b.action,b.instructions||'');}

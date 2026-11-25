@@ -8,7 +8,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev -w @calypso/desktop",
     "clean": "npm run clean -ws --if-present",
-    "start": "node apps/bridge/server.mjs",
+    "start": "node apps/bridge/supervisor.mjs",
     "build:web": "node scripts/build-web.mjs",
     "test:web": "node --check apps/web/app.js && node --check apps/web/store.js && node --check apps/bridge/server.mjs && node --test apps/bridge/test/*.test.mjs",
     "desktop": "electron apps/desktop/unified.cjs"
