@@ -8,9 +8,9 @@ Calypso combines a lightweight workspace with OpenClaw and free local AI. Projec
 
 ## Run locally
 
-Install Node.js 22.13+ (24 recommended), Ollama with a downloaded local model, and OpenClaw with its gateway running.
+Install Node.js 22.13+ (24 recommended), [Ollama](https://ollama.com/download) and OpenClaw with its gateway running. You do not need to manually download a model.
 
-The locally verified recommendation for this machine is `qwen3.5:4b` (`ollama pull qwen3.5:4b`, about 3.3 GB of local weights). Its build-and-review check created a real project file and independently read it back. LFM2.5 remains selectable, but its tool-use checks were less reliable here.
+Calypso now starts an installed Ollama runtime if needed and automatically downloads and tests the largest eligible model. For a 32 GB RAM / 8 GB VRAM laptop, the preferred candidate is `qwen3.6:35b-a3b` (about 23 GB). On machines with substantially more RAM, the selector considers 122B and 120B models. It checks physical RAM and free disk, verifies local weights, tests a real tool call and requires at least 5 generated tokens/sec before activation. Smaller candidates are tried if a larger one fails. Settings shows progress and offers manual selection or automatic re-selection. Downloads may take considerable time and existing weights are never deleted. A first-time Ollama installation or update may still be necessary. The original 4B model is a fallback rather than a mandatory default.
 
 ```sh
 git clone https://github.com/marcusdhaynes/Calypso.git

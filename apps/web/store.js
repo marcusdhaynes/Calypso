@@ -73,6 +73,7 @@ export async function action(type,b={}){
  else if(type==='routine.delete'){local.routines=local.routines.filter(r=>r.id!==b.id);result={ok:true};}
  else if(type==='memory.save'){if(!b.content?.trim())throw Error('Enter a memory.');result={...b,id:b.id||id(),createdAt:at()};const i=local.memories.findIndex(m=>m.id===result.id);if(i>=0)local.memories[i]=result;else local.memories.push(result);}
  else if(type==='memory.delete'){local.memories=local.memories.filter(m=>m.id!==b.id);result={ok:true};}
+ else if(type==='model.auto'){throw Error('Connect your computer to set up the local model.');}
  else if(type==='settings.update'){if(b.freeOnly===false||b.cloudModelsEnabled||b.apiKey||b.baseUrl)throw Error('Only free local models are allowed.');Object.assign(local.settings,{theme:b.theme||local.settings.theme,speech:b.speech??local.settings.speech,freeOnly:true});result=local.settings;}
  else if(type==='project.action'){const p=local.projects.find(p=>p.id===b.id);if(!p)throw Error('Project not found.');return launchLocally(p,b.action,b.instructions||'');}
  else throw Error('This feature needs your local computer. Connect Calypso to continue.');

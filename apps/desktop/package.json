@@ -96,7 +96,7 @@
         "from": "../bridge",
         "to": "calypso-bridge",
         "filter": [
-          "server.mjs"
+          "*.mjs"
         ]
       },
       {
