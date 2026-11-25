@@ -4,9 +4,10 @@ import {planModels,createAutoModel} from '../auto-model.mjs';
 test('hardware planning prioritizes largest practical models and reserves disk space',()=>{
  const plan=(ramGiB,diskBytes=200e9,installed=[])=>planModels({ramGiB,diskBytes,installed}).map(x=>x.id);
  assert.equal(plan(32)[0],'qwen3.6:35b-a3b');
- assert.equal(plan(64)[0],'qwen3.6:35b-a3b');
+ assert.equal(plan(64)[0],'qwen3-next:80b');
  assert.equal(plan(96)[0],'gpt-oss:120b');
  assert.equal(plan(128)[0],'qwen3.5:122b');
+ assert.equal(plan(192)[0],'qwen3:235b');
  assert.notEqual(plan(16)[0],'qwen3.6:35b-a3b');
  assert.equal(plan(32,0,['qwen3.6:35b-a3b'])[0],'qwen3.6:35b-a3b');
  assert.equal(plan(32,0).length,0);

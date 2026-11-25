@@ -6,8 +6,10 @@ const GiB=1024**3;
 // Conservative physical RAM thresholds leave room for Windows, Calypso, KV cache and tools.
 // Sizes are decimal GB as listed in the official Ollama registry; free disk is measured separately.
 export const MODEL_TIERS=[
+ {id:'qwen3:235b',b:235,ram:176,gb:142,context:16384},
  {id:'qwen3.5:122b',b:122,ram:104,gb:81,context:8192},
  {id:'gpt-oss:120b',b:120,ram:84,gb:65,context:8192},
+ {id:'qwen3-next:80b',b:80,ram:60,gb:50,context:16384},
  {id:'qwen3.6:35b-a3b',b:35,ram:29,gb:23,context:8192},
  {id:'qwen3.5:35b',b:35,ram:28,gb:22,context:8192},
  {id:'qwen3.5:27b',b:27,ram:24,gb:17,context:8192},
@@ -66,13 +68,14 @@ export function createAutoModel({url='http://127.0.0.1:11434',onUpdate=()=>{},fe
   const options={num_ctx:model.context,num_predict:96,temperature:0};
   const r=await request('/api/chat',{model:model.id,stream:false,keep_alive:'30m',options,messages:[{role:'user',content:'Call the function ping with value 42. Do not answer in prose.'}],tools:[{type:'function',function:{name:'ping',description:'Echo a number',parameters:{type:'object',properties:{value:{type:'integer'}},required:['value']}}}]},signal,240000);
   const d=await r.json();if(d.error||!d.message?.tool_calls?.some(c=>c.function?.name==='ping'&&Number(c.function?.arguments?.value)===42))throw Error('Tool-call smoke test failed.');
-  const speedResponse=await request('/api/chat',{model:model.id,stream:false,keep_alive:'30m',options,messages:[{role:'user',content:'Write five short complete sentences explaining how rain forms.'}],think:false},signal,240000);
+  const speedResponse=await request('/api/chat',{model:model.id,stream:false,keep_alive:'30m',options,messages:[{role:'user',content:'Write five short complete sentences explaining how rain forms.'}],think:model.id.startsWith('gpt-oss:')?'low':false},signal,240000);
   const v=await speedResponse.json(),tps=v.eval_duration>0?v.eval_count/(v.eval_duration/1e9):0;
   if(v.error||!v.message?.content?.trim()||!Number.isFinite(tps)||tps<minSpeed)throw Error('Generation speed below '+minSpeed+' tokens/sec or no usable response.');
   return Math.round(tps*10)/10;
  }
- async function run(signal){
+ async function run(signal,previous){
   let names=await ensureRuntime(signal);const hw=hardware();const candidates=planModels({...hw,installed:names});
+  if(previous?.revision===2&&previous.ramGiB===Math.round(hw.ramGiB)&&names.includes(previous.model)&&candidates.some(m=>m.id===previous.model)&&previous.tps>=minSpeed){update('ready',previous.model+' ready · '+previous.tps+' tokens/sec (last verified)',previous);return previous.model;}
   if(!candidates.length)throw Error('Not enough RAM or free model storage for the automatic candidates. Free space or select an installed local model manually.');
   let last='';for(const m of candidates){
    if(signal.aborted)throw Error('Setup stopped.');
@@ -84,5 +87,5 @@ export function createAutoModel({url='http://127.0.0.1:11434',onUpdate=()=>{},fe
   }
   throw Error('No candidate passed the automatic checks. '+last);
  }
- return {get status(){return status;},start(){if(closed)return Promise.resolve(null);if(pending)return pending;controller=new AbortController();pending=run(controller.signal).catch(e=>{update('error',e.message);return null;}).finally(()=>{pending=null;});return pending;},stop(){controller?.abort();},close(){closed=true;controller?.abort();/* Do not stop the user's shared Ollama runtime. */}};
+ return {get status(){return status;},start(previous){if(closed)return Promise.resolve(null);if(pending)return pending;controller=new AbortController();pending=run(controller.signal,previous).catch(e=>{update('error',e.message);return null;}).finally(()=>{pending=null;});return pending;},stop(){controller?.abort();},close(){closed=true;controller?.abort();/* Do not stop the user's shared Ollama runtime. */}};
 }
