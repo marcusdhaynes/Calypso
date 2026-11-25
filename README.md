@@ -24,7 +24,7 @@ Custom installs can set `OPENCLAW_CLI` to `openclaw.mjs`, `CALYPSO_NODE` to the 
 
 ## Low-memory 35B benchmark
 
-For 8 GB VRAM / 16 GB RAM systems, the separate [llama.cpp benchmark](docs/35B-BENCHMARK.md) tests optimized 35B GGUF profiles that are not covered by the standard Ollama memory tiers. Run it locally to determine the actual usable model and speed.
+For 8 GB VRAM / 16 GB RAM systems, the separate [llama.cpp benchmark](docs/35B-BENCHMARK.md) tests optimized 35B GGUF profiles that are not covered by the standard Ollama memory tiers. The unified local engine now runs these trials automatically on supported Windows NVIDIA laptops (14–28 GiB RAM, at least 8 GB VRAM), downloads a checksum-verified CUDA build, benchmarks two 35B quantizations and persists the passing choice. Existing Ollama models remain a fallback. OpenClaw is configured with a dedicated local provider without changing its global default. First setup needs internet access and around 40 GB available storage; exit other GPU-heavy apps. The local engine still must be installed and updated.
 
 ## Updating the local engine
 

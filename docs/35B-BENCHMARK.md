@@ -19,4 +19,4 @@ The script downloads the exact Unsloth GGUF files through llama.cpp, tries IQ4_X
 
 A candidate must produce the correct tool call and arithmetic answer, usable text on three sustained requests, median generation speed of at least 5 tokens/s, and sampled memory headroom. The report distinguishes decode timing from end-to-end rates. These are smoke checks, not SWE-bench or full OpenClaw verification. Prefer IQ4_XS when both pass. Larger SSD-streamed models need their own separate benchmarks and are not assumed to be viable.
 
-This benchmark does not yet switch the active Calypso or OpenClaw inference backend. Use the reported profile to guide that integration.
+The unified engine now automatically runs these profiles on eligible Windows NVIDIA laptops. It installs a checksum-verified llama.cpp CUDA 12.4 build, persists results, launches the winner on a private authenticated loopback endpoint, and registers a dedicated OpenClaw model provider. The manual benchmark remains useful for diagnostics. Actual end-to-end model performance and gateway compatibility must still be verified on the user's computer.
