@@ -22,6 +22,10 @@ Open **http://127.0.0.1:18791/**. The web app and bridge need no dependency inst
 
 Custom installs can set `OPENCLAW_CLI` to `openclaw.mjs`, `CALYPSO_NODE` to the Node executable, `CALYPSO_DATA_DIR` to a private data folder, or `PORT` to a different listening port.
 
+## Low-memory 35B benchmark
+
+For 8 GB VRAM / 16 GB RAM systems, the separate [llama.cpp benchmark](docs/35B-BENCHMARK.md) tests optimized 35B GGUF profiles that are not covered by the standard Ollama memory tiers. Run it locally to determine the actual usable model and speed.
+
 ## Updating the local engine
 
 Changes to this GitHub repository and the published web interface do not automatically update a Calypso engine already running on your computer. To install fixes to chat, search, and other local features, stop the existing Calypso process (Ctrl+C in its terminal, or quit the desktop app), update the source with `git pull` in the Calypso repository folder, then restart it with `npm start`. Refresh the web app and pair the browser again if prompted. On packaged desktop installs, install a newly built desktop release instead of running `git pull` inside the package. The Conversations screen warns when the paired engine does not advertise updated live search support.
