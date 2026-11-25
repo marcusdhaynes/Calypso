@@ -163,3 +163,18 @@ test('exact user wording searches celebrity obituaries instead of AnyDesk or dic
  assert.match(deathNewsDigest({sources:[],checkedAt:new Date().toISOString()}),/not\*\* proof/i);
 });
 
+
+test('automatic CUDA selection routes chat and projects through the managed model and persists choice',async t=>{
+ let ready=false,requests=[],agentModels=[],starts=0;
+ const managed={eligible:()=>true,get ready(){return ready;},status:{phase:'ready',message:'IQ4_XS ready',context:16384,quant:'UD-IQ4_XS',tps:12},async start(){starts++;ready=true;return 'calypso-35b';},async stop(){ready=false;},async close(){ready=false;},async request(body){requests.push(body);return new Response('{"message":{"content":"Managed local response"},"done":true}\n');}};
+ const {app,post,base,modelRequests}=await setup(t,{autoSetup:true,managedRuntime:managed,invokeAgent:async({project,model})=>{agentModels.push(model);fs.writeFileSync(path.join(project.folder,'result.txt'),'MANAGED');return {ok:true,text:'Done. No blockers.',tools:['write','read']};}});
+ await until(()=>app.state.settings.model==='calypso-35b');
+ const status=await app.health(true);assert.equal(status.models[0].id,'calypso-35b');assert.equal(starts,1);
+ const conversation=await(await post('conversation.create',{workerId:'calypso'})).json();
+ const r=await fetch(base+'/api/chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({conversationId:conversation.id,text:'Hello'})});
+ assert.match(await r.text(),/Managed local response/);assert.equal(requests.length,1);assert.equal(requests[0].model,'calypso-35b');assert.equal(modelRequests.length,0);
+ await post('project.create',{name:'Managed project',description:'Create a file',workerIds:['calypso']});
+ await until(()=>app.state.projects[0].status==='review');assert.deepEqual(agentModels,['calypso-35b']);
+ const saved=JSON.parse(fs.readFileSync(path.join(app.dataRoot,'state.json'),'utf8'));assert.equal(saved.settings.model,'calypso-35b');assert.equal(saved.settings.modelContext,16384);
+ assert.equal((await post('settings.update',{model:'free-local:1b'})).status,200);assert.equal(ready,false);assert.equal(app.state.settings.modelMode,'manual');
+});
