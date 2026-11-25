@@ -13,7 +13,7 @@ test('requires exact local model provenance',()=>{
 test('checks both local inference modes, actual file, tool receipts and provider identity',async t=>{
  const dataRoot=fs.mkdtempSync(path.join(os.tmpdir(),'calypso-verify-'));t.after(()=>fs.rmSync(dataRoot,{recursive:true,force:true}));
  const request=async b=>{const content=b.messages[0].content.split(': ').at(-1);return b.stream?new Response(JSON.stringify({message:{content},done:true})+'\n'):Response.json({message:{content}});};
- const runAgent=async({promptFile})=>{const prompt=fs.readFileSync(promptFile,'utf8');const input=prompt.match(/contents of (.+?input\.txt)/)[1],output=prompt.match(/to (.+?output\.txt)/)[1];fs.copyFileSync(input,output);return {ok:true,tools:['read','write'],data:{result:{meta:{agentMeta:{provider:'calypso-llama',model:'calypso-35b'}}}}};};
+ const runAgent=async({promptFile})=>{const prompt=fs.readFileSync(promptFile,'utf8');const input=prompt.match(/contents of (.+?input\.txt)/)[1],output=prompt.match(/modifications, to (.+?output\.txt)/)[1];fs.copyFileSync(input,output);return {ok:true,tools:['read','write'],data:{result:{meta:{agentMeta:{provider:'calypso-llama',model:'calypso-35b'}}}}};};
  const report=await verifyLocal({dataRoot,request,runAgent,modelStatus:{tps:12},hardware:()=>({})});
  assert.equal(report.direct.status,'passed');assert.equal(report.openclaw.status,'passed');
  assert.equal(JSON.parse(fs.readFileSync(path.join(dataRoot,'local-inference','verification','latest.json'),'utf8')).openclaw.status,'passed');

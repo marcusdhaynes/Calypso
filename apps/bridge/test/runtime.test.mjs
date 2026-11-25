@@ -178,3 +178,16 @@ test('automatic CUDA selection routes chat and projects through the managed mode
  const saved=JSON.parse(fs.readFileSync(path.join(app.dataRoot,'state.json'),'utf8'));assert.equal(saved.settings.model,'calypso-35b');assert.equal(saved.settings.modelContext,16384);
  assert.equal((await post('settings.update',{model:'free-local:1b'})).status,200);assert.equal(ready,false);assert.equal(app.state.settings.modelMode,'manual');
 });
+
+test('browser pairing survives a managed restart without storing the raw token',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'calypso-pair-'));let app=createCalypso({dataRoot:dir,noImport:true,autoSetup:false});
+ t.after(async()=>{await app.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let addr=await app.listen(0),base='http://127.0.0.1:'+addr.port;
+ const p=await fetch(base+'/api/pair',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:'{}'});const {token}=await p.json();assert.ok(token);
+ assert.equal(fs.readFileSync(path.join(dir,'paired-browsers.json'),'utf8').includes(token),false);
+ await app.close();app=createCalypso({dataRoot:dir,noImport:true,autoSetup:false});addr=await app.listen(0);base='http://127.0.0.1:'+addr.port;
+ const headers={Origin:'https://marcusdhaynes.github.io',Authorization:'Bearer '+token};
+ assert.equal((await fetch(base+'/api/state',{headers})).status,200);
+ assert.equal((await fetch(base+'/api/state',{headers:{...headers,Authorization:'Bearer invalid'}})).status,401);
+ assert.equal(app.prepareUpdate(),true);assert.equal((await fetch(base+'/api/action',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({type:'memory.save',data:{content:'must not write while restarting'}})})).status,409);
+});

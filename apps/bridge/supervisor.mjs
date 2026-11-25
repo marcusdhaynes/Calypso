@@ -49,7 +49,7 @@ async function apply(){
   if(!await drain()){notify('waiting','Update downloaded. Finishing current work before restarting.');return;}
   notify('restarting','Installing the tested engine update and reconnecting…');
   const exited=await Promise.race([new Promise(r=>{if(old.exitCode!==null||old.signalCode!==null)r(true);else old.once('exit',()=>r(true));}),sleep(60000).then(()=>false)]);
-  if(!exited){notify('error','Engine is still shutting down; update deferred.');return;}
+  if(!exited){notify('error','Engine is still shutting down; update deferred.');old.once('exit',()=>{if(!closed&&!child&&!applying)void launch(previous).catch(e=>notify('error',e.message));});return;}
   child=null;
   try{await launch(next);candidate=null;notify('current','Calypso is up to date.');}
   catch{failedRevision=next.manifest.revision;candidate=null;await launch(previous);notify('error','Update could not start. Restored the previous working engine.');}
@@ -79,7 +79,7 @@ async function main(){
   current=existing();await check();const first=candidate||current;
   try{await launch(first);if(candidate){candidate=null;notify('current','Calypso is up to date.');}}
   catch(e){if(!candidate)throw e;failedRevision=candidate.manifest.revision;candidate=null;await launch(current);notify('error','Update failed to start; previous engine restored.');}
-  timer=setInterval(()=>void check(),60000);watch=setInterval(()=>{if(candidate&&!checking)void apply();},10000);
+  timer=setInterval(()=>void check(),60000);watch=setInterval(()=>{if(!child&&!applying&&!checking&&!closed){applying=true;void launch(current).catch(e=>notify('error',e.message)).finally(()=>{applying=false;});}else if(candidate&&!checking)void apply();},10000);
   for(const sig of ['SIGINT','SIGTERM'])process.on(sig,()=>void shutdown());
  }catch(e){releaseLock();throw e;}
 }
